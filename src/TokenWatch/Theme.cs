@@ -10,6 +10,22 @@ internal static class Theme
     public static readonly Color Text = Color.FromArgb(230, 231, 235);
     public static readonly Color Muted = Color.FromArgb(148, 154, 166);
     public static readonly Color Track = Color.FromArgb(44, 48, 58);
+    public static readonly Color HoverBorder = Color.FromArgb(88, 94, 110);
+
+    private static float? _dpiScale;
+    /// <summary>System-DPI-Faktor (96 = 100 %). Geprüft über den Screen-DC des primären Monitors.</summary>
+    public static float DpiScale
+    {
+        get
+        {
+            if (_dpiScale is null)
+            {
+                using var g = Graphics.FromHwnd(IntPtr.Zero);
+                _dpiScale = Math.Max(1f, g.DpiX / 96f);
+            }
+            return _dpiScale.Value;
+        }
+    }
 
     public static readonly Color Ok = Color.FromArgb(168, 225, 12);   // Lime (v6)
     public static readonly Color Warn = Color.FromArgb(245, 181, 46);

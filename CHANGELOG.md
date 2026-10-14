@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-10-14
+
+### Changed
+- Redesigned hover popup: rounded corners, hover highlight on cards, gradient
+  bars, status glyphs (✓ / ! / ✗), sparklines with area fill, crit cards get a
+  tinted border.
+- Tray icon redrawn as a gauge ring with status-colored arc instead of a filled chip.
+
+### Fixed
+- Dead space in cards for balance/info windows (per-type row heights).
+- Popup no longer shows stale data after being hidden (dirty flag + signature).
+- No more full-card rebuild flicker when nothing visible changed.
+- Layout constants scale with system DPI (100 %/125 %/150 %).
+
 ## [1.1.0] - 2026-10-14
 
 ### Added
