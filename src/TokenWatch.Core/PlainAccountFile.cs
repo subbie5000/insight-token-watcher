@@ -14,11 +14,18 @@ public sealed class PlainAccountDto
     public string? Model { get; set; }
     public int? PollSeconds { get; set; }
     public bool? Enabled { get; set; }
+    public string? ExternalId { get; set; }
 }
 
 public sealed class PlainAccountFile
 {
     public List<PlainAccountDto> Accounts { get; set; } = new();
+
+    /// <summary>
+    /// Remove previously imported accounts that are missing from this file. Accounts added
+    /// manually in the settings dialog are never touched.
+    /// </summary>
+    public bool Prune { get; set; }
 
     public static PlainAccountFile Load(string path)
     {
@@ -56,7 +63,8 @@ public sealed class PlainAccountFile
             BaseUrlOverride = string.IsNullOrWhiteSpace(dto.BaseUrlOverride) ? null : dto.BaseUrlOverride.Trim(),
             Model = dto.Model?.Trim() ?? "",
             PollSeconds = dto.PollSeconds is > 0 ? dto.PollSeconds.Value : 60,
-            Enabled = dto.Enabled ?? true
+            Enabled = dto.Enabled ?? true,
+            ExternalId = string.IsNullOrWhiteSpace(dto.ExternalId) ? null : dto.ExternalId.Trim()
         }, dto.ApiKey.Trim(), null);
     }
 

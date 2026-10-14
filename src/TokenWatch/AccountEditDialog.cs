@@ -31,6 +31,10 @@ internal sealed class AccountEditDialog : Form
         _acc = acc;
         _isNew = isNew;
 
+        // coordinates below are at 96 dpi; WinForms scales them for the actual DPI
+        AutoScaleDimensions = new SizeF(96F, 96F);
+        AutoScaleMode = AutoScaleMode.Dpi;
+
         Text = isNew ? "Konto hinzufügen" : $"Konto bearbeiten – {acc.Name}";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -130,6 +134,12 @@ internal sealed class AccountEditDialog : Form
         CancelButton = cancel;
 
         UpdateProviderUi();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        DarkChrome.Apply(this);
     }
 
     private Control Field(Control c, string? value, int y)

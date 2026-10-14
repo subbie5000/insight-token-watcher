@@ -64,7 +64,13 @@ public sealed class AnthropicPoller : IAccountPoller
 
             if (!windows.TryGetValue(winKey, out var w))
             {
-                w = new QuotaWindow { Key = winKey, Label = LabelFor(winKey), Unit = "Quota" };
+                w = new QuotaWindow
+                {
+                    Key = winKey,
+                    Label = LabelFor(winKey),
+                    Unit = "Quota",
+                    WindowMinutes = MinutesFor(winKey)
+                };
                 windows[winKey] = w;
             }
             switch (field)
@@ -133,7 +139,8 @@ public sealed class AnthropicPoller : IAccountPoller
                 Total = lim,
                 Remaining = rem,
                 UsedFraction = rem is null ? null : Math.Clamp(1 - rem.Value / lim, 0, 1),
-                ResetAtUtc = reset
+                ResetAtUtc = reset,
+                WindowMinutes = 1
             };
         }
 
@@ -155,6 +162,15 @@ public sealed class AnthropicPoller : IAccountPoller
         "7d_opus" => "Opus-Woche",
         _ => key
     };
+
+    /// <summary>"5h" → 300, "7d"/"7d_sonnet" → 10080.</summary>
+    internal static double? MinutesFor(string key)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(key, @"^(\d+)([hd])");
+        if (!m.Success) return null;
+        var n = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        return m.Groups[2].Value == "h" ? n * 60 : n * 1440;
+    }
 
     private static string StatusLabel(string raw) => raw switch
     {

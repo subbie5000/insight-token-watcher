@@ -40,18 +40,25 @@ API keys are stored DPAPI-encrypted (`%APPDATA%\TokenWatch\config.json`,
 
 ## Usage
 
-- **Hover the tray icon** → popup with all accounts.
-- **Click an account card** → re-poll that account immediately.
-- **Colors**: lime = OK, amber = tight, red = critical/error.
-- Per window: utilization bar, a forecast line
-  ("Noch 3 h 41 min · Reset in 2 h 14 min – reicht bis zum Reset" vs.
-  "Leer in … – Reset erst in …!") and a 60-minute history sparkline.
-- Balance accounts (DeepSeek/Moonshot): remaining credit + "lasts N days".
+- **Hover the tray icon** → popup with all accounts; **left-click** pins it open.
+- One row per account: the **short window** (e.g. 5 h) in the left column, the
+  **long window** (week) in the right, each with bar, percentage and reset countdown —
+  so the same kind of window lines up across all accounts. Balance accounts show the
+  remaining credit and how long it lasts.
+- A forecast line appears only when an account is **tight** or **critical**
+  ("Woche: Leer in … – Reset erst in …!").
+- **Hover a row** for details (all windows, exact reset times, forecasts); **click a
+  row** to re-poll that account immediately.
+- **Colors**: lime = OK, amber = tight, red = critical/error, grey = stale.
+- If a poll fails, the last good values stay visible (marked stale) instead of
+  being replaced by an error.
+- Tray icon: one ring segment per account in its status color.
 - Balloon warning when an account turns critical (can be disabled).
 
 ## How the forecast works
 
-Every account is polled on its own interval (default 60 s). From the samples of the
+Every account is polled on its own interval (default 60 s; slowed to ≤ 5 min while
+nothing changes, back to the base rate on the first change). From the samples of the
 last 60 minutes the app computes a burn rate (least-squares slope) and projects the
 time-to-empty, which is then compared against the time-to-reset:
 
@@ -82,20 +89,28 @@ free status endpoints.
 }
 ```
 
-`provider`: `anthropic` | `kimicode` | `moonshot` | `zai` | `deepseek`;
+`provider`: `anthropic` | `kimicode` | `moonshot` | `zai` | `deepseek` | `openai` |
+`openrouter` | `genericopenai`;
 optional: `auth` (`apikey`/`bearer`), `baseUrlOverride`, `model`, `pollSeconds`, `enabled`.
+Accounts are matched by name, so re-importing updates keys in place (e.g. from a
+token-rotation job); a running instance reloads the config automatically.
 
 `TokenWatch.Cli accounts.json` polls once and prints the result (handy for debugging
 credentials). On Windows, `TokenWatch.Cli --app-config` does the same against the
 encrypted app config.
+
+`TokenWatch.exe --render <dir> [--scale 1.5]` renders the popup with synthetic demo
+data into PNG files (plus a scroll/update stress check) — useful for UI work without
+touching the tray.
 
 ## Note on Anthropic OAuth tokens
 
 `claude` OAuth access tokens expire after hours and are rotated by whichever tool
 owns the refresh token. TokenWatch deliberately does **not** refresh tokens: the
 refresh token belongs to the tool that issued the login, and consuming it elsewhere
-would break that tool. When a token expires, the account shows a 401 error — paste a
-fresh one, or create a long-lived token once via `claude setup-token` and use that.
+would break that tool. When a token expires, the account keeps showing its last
+values marked "Token abgelaufen" until a fresh token arrives — paste one, re-import
+it, or create a long-lived token once via `claude setup-token`.
 
 ## Build
 

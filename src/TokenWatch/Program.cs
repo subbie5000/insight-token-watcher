@@ -2,6 +2,11 @@ namespace TokenWatch;
 
 internal static class Program
 {
+    private const string MutexName = @"Local\TokenWatch-6F2A9C1E-single-instance";
+
+    /// <summary>Signalled by a second start of the exe: the running instance opens its overview.</summary>
+    public const string ShowEventName = @"Local\TokenWatch-6F2A9C1E-show";
+
     private static Mutex? _mutex;
 
     [STAThread]
@@ -12,11 +17,25 @@ internal static class Program
         if (args.Length >= 2 && args[0].Equals("--import", StringComparison.OrdinalIgnoreCase))
             return ConfigImporter.Run(args[1]);
 
-        _mutex = new Mutex(true, @"Local\TokenWatch-6F2A9C1E-single-instance", out var created);
+        // Offscreen rendering of the popup with demo data (visual checks).
+        // TokenWatch.exe --render <outDir> [--scale 1.5]
+        if (args.Length >= 1 && args[0].Equals("--render", StringComparison.OrdinalIgnoreCase))
+            return RenderHarness.Run(args[1..]);
+
+        _mutex = new Mutex(true, MutexName, out var created);
         if (!created)
         {
-            MessageBox.Show("TokenWatch läuft bereits (System-Tray).", "TokenWatch",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // Already running (e.g. started again from the Start menu): show its overview instead
+            // of a "already running" message box, then leave quietly.
+            try
+            {
+                using var show = EventWaitHandle.OpenExisting(ShowEventName);
+                show.Set();
+            }
+            catch (WaitHandleCannotBeOpenedException)
+            {
+                // the other instance is still starting up – nothing to do
+            }
             return 0;
         }
 

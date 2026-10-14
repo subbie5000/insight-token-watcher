@@ -40,6 +40,12 @@ public sealed class AccountConfig
     public int PollSeconds { get; set; } = 60;
     public bool Enabled { get; set; } = true;
 
+    /// <summary>"import" for accounts created by <c>--import</c>; null for manually added ones.</summary>
+    public string? Source { get; set; }
+
+    /// <summary>Stable id from the import source (e.g. a credential label); survives renames.</summary>
+    public string? ExternalId { get; set; }
+
     [JsonIgnore]
     public string EffectiveModel =>
         !string.IsNullOrWhiteSpace(Model) ? Model.Trim() : "claude-haiku-4-5-20251001";
@@ -59,6 +65,9 @@ public sealed class QuotaWindow
 
     /// <summary>Informational value only (e.g. spend totals) – no bar, no forecast.</summary>
     public bool IsInfoOnly { get; set; }
+
+    /// <summary>Window length in minutes (300 = 5 h, 10080 = week); null = unknown.</summary>
+    public double? WindowMinutes { get; set; }
 }
 
 public sealed class AccountSnapshot

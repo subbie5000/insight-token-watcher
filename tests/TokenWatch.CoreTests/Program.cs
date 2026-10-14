@@ -154,6 +154,19 @@ Run("Kimi Code: weekly and 5h windows", () =>
 
 // ---------- Moonshot ----------
 
+Run("Kimi Code: proto3 omits used=0 → 0 %, not unknown", () =>
+{
+    // observed live: the 5 h window right after a reset has no "used" field
+    var json = """
+    { "usage": { "limit": "100", "used": "61", "remaining": "39", "resetTime": "2026-10-20T10:22:09Z" },
+      "limits": [ { "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                    "detail": { "limit": "100", "remaining": "100", "resetTime": "2026-10-14T18:22:09Z" } } ] }
+    """;
+    var s = KimiCodePoller.ParseBody(Guid.NewGuid(), json);
+    var five = s.Windows.First(w => w.Key == "300m");
+    Check(five.UsedFraction == 0, "expected 0, got " + five.UsedFraction);
+});
+
 Run("Moonshot: balance (international = USD)", () =>
 {
     var json = """{"code":0,"data":{"available_balance":45.20,"voucher_balance":10.00,"cash_balance":35.20}}""";
@@ -253,7 +266,7 @@ Run("DeepSeek: USD preferred, breakdown in note", () =>
     var w = s.Windows[0];
     Check(w.Unit == "USD", "expected USD, got " + w.Unit);
     Check(Math.Abs(w.Remaining!.Value - 37.61) < 1e-9, "Betrag");
-    Check(w.Note!.Contains("30.00"), "paid breakdown");
+    Check(w.Note!.Contains("30,00 $"), "paid breakdown in German format: " + w.Note);
 });
 
 // ---------- Burn-Engine ----------
@@ -443,6 +456,136 @@ Run("GenericOpenAi: without headers = readable error", () =>
     Check(!s.Ok && s.Error!.Contains("401"), "error with status code");
 });
 
+// ---------- layout ----------
+
+QuotaWindow Qw(string key, double? minutes, bool balance = false, bool info = false) =>
+    new() { Key = key, Label = key, WindowMinutes = minutes, IsBalance = balance, IsInfoOnly = info, UsedFraction = 0.1 };
+
+Run("Layout: Anthropic 7d first (representative) still lands right, 5h left", () =>
+{
+    var r = WindowLayout.Classify(new[] { Qw("7d", 10080), Qw("5h", 300), Qw("7d_sonnet", 10080) });
+    Check(r.Short?.Key == "5h", "short=5h, got " + r.Short?.Key);
+    Check(r.Long?.Key == "7d", "long=7d, got " + r.Long?.Key);
+    Check(r.Extras.Count == 1 && r.Extras[0].Key == "7d_sonnet", "sonnet as extra");
+});
+
+Run("Layout: Kimi week+5h sorted into columns", () =>
+{
+    var r = WindowLayout.Classify(new[] { Qw("week", 10080), Qw("300m", 300) });
+    Check(r.Short?.Key == "300m" && r.Long?.Key == "week", "columns");
+});
+
+Run("Layout: balance spans, everything else becomes extra", () =>
+{
+    var r = WindowLayout.Classify(new[] { Qw("key", null, info: true), Qw("balance", null, balance: true) });
+    Check(r.Span?.Key == "balance", "balance spans (preferred over info)");
+    Check(r.Extras.Count == 1 && r.Extras[0].Key == "key", "key info as extra");
+    Check(r.Short is null && r.Long is null, "no cells");
+});
+
+Run("Layout: unknown durations fill short then long", () =>
+{
+    var r = WindowLayout.Classify(new[] { Qw("requests", null), Qw("tokens", null), Qw("x", null) });
+    Check(r.Short?.Key == "requests" && r.Long?.Key == "tokens" && r.Extras.Count == 1, "fill order");
+});
+
+Run("Layout: short labels", () =>
+{
+    Check(WindowLayout.ShortLabel(Qw("a", 300)) == "5 h", "5 h");
+    Check(WindowLayout.ShortLabel(Qw("b", 10080)) == "Woche", "Woche");
+    Check(WindowLayout.ShortLabel(Qw("c", 1440)) == "Tag", "Tag");
+    Check(WindowLayout.ShortLabel(Qw("d", null)) == "d", "fallback label");
+    Check(WindowLayout.ShortLabel(Qw("e", null, balance: true)) == "Guthaben", "balance");
+});
+
+Run("Anthropic: window minutes from header keys", () =>
+{
+    Check(AnthropicPoller.MinutesFor("5h") == 300, "5h");
+    Check(AnthropicPoller.MinutesFor("7d") == 10080, "7d");
+    Check(AnthropicPoller.MinutesFor("7d_sonnet") == 10080, "7d_sonnet");
+    Check(AnthropicPoller.MinutesFor("weird") is null, "unknown");
+});
+
+// ---------- engine ----------
+
+AccountSnapshot OkSnap(Guid id, double used) => new()
+{
+    AccountId = id, Ok = true,
+    Windows = { new QuotaWindow { Key = "5h", Label = "5h", WindowMinutes = 300, UsedFraction = used,
+        ResetAtUtc = DateTimeOffset.UtcNow.AddHours(2) } }
+};
+
+Run("Engine: failure after success keeps last good values (stale)", () =>
+{
+    using var eng = new PollingEngine();
+    var cfg = new AccountConfig { Name = "a", Provider = ProviderKind.Anthropic };
+    eng.Reconfigure(new[] { (cfg, "k") });
+    eng.IngestFor(cfg.Id, OkSnap(cfg.Id, 0.4));
+    eng.IngestFor(cfg.Id, AccountSnapshot.Failure(cfg.Id, "HTTP 401 – … OAuth access token has expired."));
+    var v = eng.GetView()[0];
+    Check(v.IsStale, "stale");
+    Check(v.Display?.Windows[0].UsedFraction == 0.4, "shows last good value");
+    Check(v.Failure == FailureKind.AuthExpired, "auth expired, got " + v.Failure);
+    Check(v.Health == Health.Unknown, "expired token is not an alarm, got " + v.Health);
+});
+
+Run("Engine: network errors become critical only after 3 in a row", () =>
+{
+    using var eng = new PollingEngine();
+    var cfg = new AccountConfig { Name = "a", Provider = ProviderKind.DeepSeek };
+    eng.Reconfigure(new[] { (cfg, "k") });
+    eng.IngestFor(cfg.Id, OkSnap(cfg.Id, 0.1));
+    eng.IngestFor(cfg.Id, AccountSnapshot.Failure(cfg.Id, "HttpRequestException: no route"));
+    eng.IngestFor(cfg.Id, AccountSnapshot.Failure(cfg.Id, "TaskCanceledException: timeout"));
+    Check(eng.GetView()[0].Health != Health.Crit, "2 failures: not crit yet");
+    eng.IngestFor(cfg.Id, AccountSnapshot.Failure(cfg.Id, "HttpRequestException: no route"));
+    Check(eng.GetView()[0].Health == Health.Crit, "3 failures: crit");
+});
+
+Run("Engine: success after failure clears error state", () =>
+{
+    using var eng = new PollingEngine();
+    var cfg = new AccountConfig { Name = "a", Provider = ProviderKind.Anthropic };
+    eng.Reconfigure(new[] { (cfg, "k") });
+    eng.IngestFor(cfg.Id, AccountSnapshot.Failure(cfg.Id, "HTTP 500 – boom"));
+    eng.IngestFor(cfg.Id, OkSnap(cfg.Id, 0.2));
+    var v = eng.GetView()[0];
+    Check(!v.IsStale && v.Failure == FailureKind.None && v.ConsecutiveFailures == 0, "cleared");
+});
+
+Run("Engine: rotated token keeps history, provider change resets it", () =>
+{
+    using var eng = new PollingEngine();
+    var cfg = new AccountConfig { Name = "a", Provider = ProviderKind.Anthropic };
+    eng.Reconfigure(new[] { (cfg, "k1") });
+    eng.IngestFor(cfg.Id, OkSnap(cfg.Id, 0.2));
+    eng.Reconfigure(new[] { (cfg, "k2") }); // token rotation
+    Check(eng.GetView()[0].LastGood is not null, "history kept on rotation");
+    var moved = new AccountConfig { Id = cfg.Id, Name = "a", Provider = ProviderKind.DeepSeek };
+    eng.Reconfigure(new[] { (moved, "k2") });
+    Check(eng.GetView()[0].LastGood is null, "reset on provider change");
+});
+
+Run("Engine: stable provider order instead of severity order", () =>
+{
+    using var eng = new PollingEngine();
+    var ds = new AccountConfig { Name = "DeepSeek", Provider = ProviderKind.DeepSeek };
+    var an = new AccountConfig { Name = "Anthropic b", Provider = ProviderKind.Anthropic };
+    var an2 = new AccountConfig { Name = "Anthropic a", Provider = ProviderKind.Anthropic };
+    eng.Reconfigure(new[] { (ds, "k"), (an, "k"), (an2, "k") });
+    var names = eng.GetView().Select(v => v.Config.Name).ToList();
+    Check(string.Join(",", names) == "Anthropic a,Anthropic b,DeepSeek", string.Join(",", names));
+});
+
+Run("Engine: failure classification", () =>
+{
+    Check(PollingEngine.ClassifyFailure("Kein API-Schlüssel hinterlegt (Einstellungen).") == FailureKind.AuthInvalid, "missing key");
+    Check(PollingEngine.ClassifyFailure("HTTP 401: {\"error\":\"invalid api key\"}") == FailureKind.AuthInvalid, "401");
+    Check(PollingEngine.ClassifyFailure("HttpRequestException: Name or service not known") == FailureKind.Network, "dns");
+    Check(PollingEngine.ClassifyFailure("HTTP 503: upstream") == FailureKind.Network, "503");
+    Check(PollingEngine.ClassifyFailure("HTTP 500: boom") == FailureKind.Other, "500");
+});
+
 // ---------- formatting ----------
 
 Run("formatting: time spans", () =>
@@ -451,6 +594,22 @@ Run("formatting: time spans", () =>
     Check(Formatting.Span(TimeSpan.FromHours(2.25)) == "2 h 15 min", "2h15");
     Check(Formatting.Span(TimeSpan.FromDays(1.5)) == "1 d 12 h", "1.5d");
     Check(Formatting.Span(null) == "∞", "null");
+});
+
+Run("formatting: spans are rounded, so texts computed seconds apart agree", () =>
+{
+    // 27 h minus a few seconds used to show "1 d 2 h" in one place and "1 d 3 h" in another
+    Check(Formatting.Span(TimeSpan.FromHours(27) - TimeSpan.FromSeconds(5)) == "1 d 3 h",
+        Formatting.Span(TimeSpan.FromHours(27) - TimeSpan.FromSeconds(5)));
+    Check(Formatting.Span(TimeSpan.FromMinutes(156) - TimeSpan.FromSeconds(20)) == "2 h 36 min",
+        Formatting.Span(TimeSpan.FromMinutes(156) - TimeSpan.FromSeconds(20)));
+    Check(Formatting.Span(TimeSpan.FromSeconds(20)) == "<1 min", "<1 min");
+});
+
+Run("formatting: money in German style", () =>
+{
+    Check(Formatting.Money(23.42, "USD") == "23,42 $", Formatting.Money(23.42, "USD"));
+    Check(Formatting.Money(1234.5, "CNY") == "1.234,50 ¥", Formatting.Money(1234.5, "CNY"));
 });
 
 Console.WriteLine();

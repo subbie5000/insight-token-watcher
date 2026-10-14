@@ -1,215 +1,42 @@
-using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using TokenWatch.Core;
 
 namespace TokenWatch;
 
-/// <summary>Borderless hover popup above the tray. Hides itself when the pointer leaves.</summary>
+/// <summary>Borderless, non-activating popup host near the tray. Auto-hides unless pinned.</summary>
 internal sealed class PopupForm : Form
 {
-    private const int ContentWidth = 420;
-    private readonly TrayAppContext _ctx;
-    private readonly Panel _cardsPanel;
-    private readonly Label _footer;
-    private readonly System.Windows.Forms.Timer _hideTimer = new() { Interval = 300 };
-    private DateTime _lastInsideUtc = DateTime.MinValue;
-    private IReadOnlyList<AccountView> _views = Array.Empty<AccountView>();
-    private bool _dirty = true;
-    private string _lastSignature = "";
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
-    public PopupForm(TrayAppContext ctx)
+    private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    private const int DWMWA_BORDER_COLOR = 34;
+    private const int DWMWCP_ROUND = 2;
+
+    private static readonly bool IsWin11 = Environment.OSVersion.Version.Build >= 22000;
+
+    private readonly System.Windows.Forms.Timer _hideTimer = new() { Interval = 150 };
+    private readonly System.Windows.Forms.Timer _repaint = new() { Interval = 20000 }; // countdowns
+    private Point _anchor;
+    private DateTime _lastInsideUtc;
+
+    public PopupCanvas Canvas { get; } = new() { Dock = DockStyle.Fill };
+
+    public PopupForm()
     {
-        _ctx = ctx;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        BackColor = Theme.Bg;
-        Width = ContentWidth + 16;
-        DoubleBuffered = true;
         AutoScaleMode = AutoScaleMode.None;
-
-        var s = Theme.DpiScale;
-        var headerH = (int)(46 * s);
-        var header = new Panel { Dock = DockStyle.Top, Height = headerH, BackColor = Theme.Bg };
-        var title = new Label
-        {
-            Text = "TokenWatch",
-            Font = Theme.TitleFont,
-            ForeColor = Theme.Text,
-            AutoSize = true,
-            Location = new Point((int)(14 * s), (int)(8 * s))
-        };
-        var subtitle = new Label
-        {
-            Text = "LLM-Quoten live",
-            Font = Theme.SmallFont,
-            ForeColor = Theme.Muted,
-            AutoSize = true,
-            Location = new Point((int)(15 * s), (int)(27 * s))
-        };
-        header.Controls.Add(title);
-        header.Controls.Add(subtitle);
-        header.Controls.Add(MakeHeaderButton("⟳ Aktualisieren", (int)(212 * s), s, (_, _) => { _ctx.RefreshNow(); }));
-        header.Controls.Add(MakeHeaderButton("⚙ Einstellungen", (int)(312 * s), s, (_, _) => { _ctx.ShowSettings(); }));
-        Controls.Add(header);
-
-        _cardsPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            AutoScroll = true,
-            BackColor = Theme.Bg,
-            Padding = new Padding(0, 0, 0, (int)(8 * s))
-        };
-        Controls.Add(_cardsPanel);
-
-        _footer = new Label
-        {
-            Dock = DockStyle.Bottom,
-            Height = (int)(26 * s),
-            Font = Theme.SmallFont,
-            ForeColor = Theme.Muted,
-            TextAlign = ContentAlignment.MiddleCenter,
-            BackColor = Theme.Bg
-        };
-        Controls.Add(_footer);
-
-        _cardsPanel.BringToFront();
-        header.BringToFront();
-        _footer.BringToFront();
-
-        _hideTimer.Tick += (_, _) => CheckCursorOutside();
-    }
-
-    private Button MakeHeaderButton(string text, int x, float s, EventHandler onClick)
-    {
-        var b = new Button
-        {
-            Text = text,
-            Font = Theme.SmallFont,
-            ForeColor = Theme.Muted,
-            BackColor = Theme.Card,
-            FlatStyle = FlatStyle.Flat,
-            Location = new Point(x, (int)(10 * s)),
-            Size = new Size((int)(96 * s), (int)(25 * s)),
-            Cursor = Cursors.Hand
-        };
-        b.FlatAppearance.BorderColor = Theme.CardBorder;
-        b.FlatAppearance.MouseOverBackColor = Theme.Track;
-        b.Click += onClick;
-        return b;
-    }
-
-    private static string Signature(IReadOnlyList<AccountView> views)
-    {
-        var sb = new System.Text.StringBuilder();
-        foreach (var v in views)
-        {
-            sb.Append(v.Config.Id).Append('|').Append(v.Health).Append('|').Append(v.Polling).Append('|');
-            if (v.Snapshot is not null)
-            {
-                sb.Append(v.Snapshot.Ok).Append('|').Append(v.Snapshot.AtUtc.Ticks).Append('|');
-                foreach (var w in v.Snapshot.Windows)
-                    sb.Append(w.Key).Append(':').Append(w.UsedFraction).Append(':').Append(w.Remaining).Append(';');
-            }
-        }
-        return sb.ToString();
-    }
-
-    public void UpdateData(IReadOnlyList<AccountView> views)
-    {
-        _views = views;
-        _footer.Text = views.Count == 0
-            ? "Keine Konten konfiguriert"
-            : $"Stand: {DateTime.Now:HH:mm:ss} · {views.Count} Konten · Klick auf Karte = neu messen";
-        var sig = Signature(views);
-        if (sig != _lastSignature)
-        {
-            _lastSignature = sig;
-            _dirty = true;
-            if (Visible) Rebuild();
-        }
-    }
-
-    public void Rebuild()
-    {
-        _dirty = false;
-        _cardsPanel.SuspendLayout();
-        _cardsPanel.Controls.Clear();
-        var s = Theme.DpiScale;
-        var y = (int)(6 * s);
-        foreach (var v in _views)
-        {
-            var card = new AccountCardControl(v, _ctx)
-            {
-                Width = (int)((ContentWidth - 20) * s),
-                Location = new Point((int)(8 * s), y)
-            };
-            _cardsPanel.Controls.Add(card);
-            y += card.Height + (int)(8 * s);
-        }
-        _cardsPanel.ResumeLayout();
-
-        var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
-        var chrome = (int)((46 + 26) * s); // header + footer
-        var wanted = y + chrome + (int)(14 * s);
-        Height = Math.Min(wanted, (int)(screen.Height * 0.8));
-        Width = (int)((ContentWidth + 16) * s);
-    }
-
-    public void ShowNear(Point cursor)
-    {
-        if (_dirty || !Visible) Rebuild();
-        var screen = Screen.FromPoint(cursor).WorkingArea;
-        var x = Math.Clamp(cursor.X - Width / 2, screen.Left + 4, screen.Right - Width - 4);
-        var y = screen.Bottom - Height - 4;
-        if (cursor.Y < screen.Top + Height + 60) y = screen.Top + 48; // taskbar on top
-        Location = new Point(x, y);
-        if (!Visible)
-        {
-            Show();
-            _hideTimer.Start();
-        }
-        _lastInsideUtc = DateTime.UtcNow;
-    }
-
-    public void HidePopup()
-    {
-        _hideTimer.Stop();
-        Hide();
-    }
-
-    private void CheckCursorOutside()
-    {
-        var pos = Cursor.Position;
-        var bounds = Bounds;
-        // 48 px slack at the bottom: that is where the tray icon sits
-        var inflated = new Rectangle(bounds.Left - 16, bounds.Top - 16,
-            bounds.Width + 32, bounds.Height + 32 + 48);
-        if (inflated.Contains(pos))
-        {
-            _lastInsideUtc = DateTime.UtcNow;
-            return;
-        }
-        if ((DateTime.UtcNow - _lastInsideUtc).TotalMilliseconds > 500)
-            HidePopup();
+        BackColor = Theme.Bg;
+        Canvas.DrawOwnBorder = !IsWin11;
+        Controls.Add(Canvas);
+        _hideTimer.Tick += (_, _) => CheckHide();
+        _repaint.Tick += (_, _) => Canvas.Invalidate();
     }
 
     protected override bool ShowWithoutActivation => true;
-
-    protected override void OnResize(EventArgs e)
-    {
-        base.OnResize(e);
-        if (Width > 2 && Height > 2)
-            Region = new Region(AccountCardControl.Rounded(new Rectangle(0, 0, Width, Height), 12));
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e);
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var pen = new Pen(Theme.CardBorder);
-        e.Graphics.DrawPath(pen, AccountCardControl.Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 12));
-    }
 
     protected override CreateParams CreateParams
     {
@@ -217,7 +44,112 @@ internal sealed class PopupForm : Form
         {
             var cp = base.CreateParams;
             cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE
+            cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW (no Alt-Tab entry)
+            if (IsWin11) cp.ClassStyle |= 0x00020000; // CS_DROPSHADOW
             return cp;
         }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (!IsWin11) return;
+        var corner = DWMWCP_ROUND;
+        DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
+        var border = ColorTranslator.ToWin32(Theme.CardBorder);
+        DwmSetWindowAttribute(Handle, DWMWA_BORDER_COLOR, ref border, sizeof(int));
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (IsWin11 || Width <= 0 || Height <= 0) return;
+        using var path = Gfx.Round(new RectangleF(0, 0, Width, Height), Theme.S(10));
+        var old = Region;
+        Region = new Region(path);
+        old?.Dispose();
+    }
+
+    public void SetData(IReadOnlyList<AccountView> views)
+    {
+        Canvas.SetData(views);
+        if (Visible) ApplyBounds();
+    }
+
+    /// <summary>Show anchored at the tray-icon position. Repositions only if not yet visible.</summary>
+    public void ShowAt(Point anchor)
+    {
+        if (!Visible)
+        {
+            _anchor = anchor;
+            ApplyBounds();
+            Show();
+        }
+        _lastInsideUtc = DateTime.UtcNow;
+        _hideTimer.Start();
+        _repaint.Start();
+    }
+
+    public void KeepAlive() => _lastInsideUtc = DateTime.UtcNow;
+
+    public void HidePopup()
+    {
+        _hideTimer.Stop();
+        _repaint.Stop();
+        Canvas.Pinned = false;
+        Canvas.ResetHover();
+        Hide();
+    }
+
+    private void ApplyBounds()
+    {
+        var screen = Screen.FromPoint(_anchor);
+        var wa = screen.WorkingArea;
+        var full = screen.Bounds;
+        var w = Theme.S(PopupCanvas.LogicalWidth);
+        var h = Math.Min(Canvas.DesiredHeight, (int)(wa.Height * 0.85));
+        var gap = Theme.S(10);
+
+        int x, y;
+        if (wa.Bottom < full.Bottom) { x = _anchor.X - w / 2; y = wa.Bottom - h - gap; }   // taskbar bottom
+        else if (wa.Top > full.Top) { x = _anchor.X - w / 2; y = wa.Top + gap; }           // taskbar top
+        else if (wa.Left > full.Left) { x = wa.Left + gap; y = _anchor.Y - h / 2; }        // taskbar left
+        else if (wa.Right < full.Right) { x = wa.Right - w - gap; y = _anchor.Y - h / 2; } // taskbar right
+        else { x = _anchor.X - w / 2; y = _anchor.Y - h - gap; }                           // auto-hide taskbar
+
+        x = Math.Clamp(x, wa.Left + gap, Math.Max(wa.Left + gap, wa.Right - w - gap));
+        y = Math.Clamp(y, wa.Top + gap, Math.Max(wa.Top + gap, wa.Bottom - h - gap));
+        SetBounds(x, y, w, h);
+    }
+
+    private void CheckHide()
+    {
+        if (Canvas.Pinned || Canvas.IsDragging)
+        {
+            _lastInsideUtc = DateTime.UtcNow;
+            return;
+        }
+        var p = Cursor.Position;
+        // popup plus a bridge down to the tray icon, so moving from icon to popup never closes it
+        var anchorBox = new Rectangle(_anchor.X - Theme.S(30), _anchor.Y - Theme.S(30), Theme.S(60), Theme.S(60));
+        var zone = Rectangle.Union(Bounds, anchorBox);
+        zone.Inflate(Theme.S(8), Theme.S(8));
+        if (zone.Contains(p))
+        {
+            _lastInsideUtc = DateTime.UtcNow;
+            return;
+        }
+        if ((DateTime.UtcNow - _lastInsideUtc).TotalMilliseconds > 450)
+            HidePopup();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _hideTimer.Dispose();
+            _repaint.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }

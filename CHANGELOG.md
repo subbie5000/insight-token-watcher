@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-10-14
+
+### Changed
+- Popup redesigned as a compact table: one row per account, the short window (5 h)
+  in the left column and the long window (week) in the right, so the same kind of
+  window lines up across all accounts. Forecast text only appears when an account
+  is tight or critical; full details are in a hover tooltip.
+- Popup is a single owner-drawn surface with smooth wheel scrolling and a slim
+  custom scrollbar; header shows a status summary; pin button keeps it open.
+- Rows are ordered by provider (stable) instead of jumping around by severity.
+- Tray icon: one ring segment per account in its status color.
+- Dialogs scale with system DPI and use dark title bars.
+- Polling slows down to ≤ 5 min while an account is idle and speeds back up on change.
+
+### Fixed
+- Scrolling the popup could leave it blank: cards were child controls in an
+  auto-scroll panel and were recreated on every poll, shifting while scrolled
+  (also leaked window handles).
+- A failed poll replaced valid values with an error; the last good values now stay
+  visible (marked stale). Expired tokens no longer raise a critical alarm, network
+  hiccups only after three failures in a row.
+- The running app never picked up an external import: the watcher ignored the
+  atomic rename and the store re-used its in-memory copy instead of re-reading.
+- Balloon warnings and updates were dropped until the popup had been opened once.
+- A transient read error on startup could reset the config and later overwrite it.
+- The popup followed the cursor while hovering the tray icon.
+- Burn-rate history is kept when an account's token is rotated.
+
 ## [1.2.0] - 2026-10-14
 
 ### Changed

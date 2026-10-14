@@ -39,36 +39,45 @@ public static class TimeParsing
 
 public static class Formatting
 {
+    private static readonly CultureInfo De = CultureInfo.GetCultureInfo("de-DE");
+
+    /// <summary>
+    /// Rounded (not truncated) so that two texts computed seconds apart show the same value:
+    /// minutes below a day, hours from one day on.
+    /// </summary>
     public static string Span(TimeSpan? ts)
     {
         if (ts is null) return "∞";
         var t = ts.Value;
         if (t < TimeSpan.Zero) t = TimeSpan.Zero;
-        if (t.TotalMinutes < 1) return "<1 min";
-        if (t.TotalHours < 1) return $"{(int)t.TotalMinutes} min";
-        if (t.TotalDays < 1) return $"{(int)t.TotalHours} h {t.Minutes:D2} min";
-        return $"{(int)t.TotalDays} d {t.Hours} h";
+        if (t.TotalSeconds < 30) return "<1 min";
+        var minutes = (long)Math.Round(t.TotalMinutes);
+        if (minutes < 60) return $"{minutes} min";
+        if (minutes < 24 * 60) return $"{minutes / 60} h {minutes % 60:D2} min";
+        var hours = (long)Math.Round(t.TotalHours);
+        return $"{hours / 24} d {hours % 24} h";
     }
 
     public static string Count(double? v)
     {
         if (v is null) return "–";
         var x = v.Value;
-        if (Math.Abs(x) >= 1_000_000) return (x / 1_000_000).ToString("0.0", CultureInfo.GetCultureInfo("de-DE")) + " M";
-        if (Math.Abs(x) >= 10_000) return (x / 1000).ToString("0.0", CultureInfo.GetCultureInfo("de-DE")) + " k";
-        return x.ToString("0.##", CultureInfo.GetCultureInfo("de-DE"));
+        if (Math.Abs(x) >= 1_000_000) return (x / 1_000_000).ToString("0.0", De) + " M";
+        if (Math.Abs(x) >= 10_000) return (x / 1000).ToString("0.0", De) + " k";
+        return x.ToString("0.##", De);
     }
 
+    /// <summary>German number format with the currency sign after the amount: "23,42 $".</summary>
     public static string Money(double? v, string unit)
     {
         if (v is null) return "–";
-        var cur = unit is "USD" or "$" ? "$" : unit is "CNY" or "¥" ? "¥" : unit;
-        return cur + v.Value.ToString("0.00", CultureInfo.InvariantCulture);
+        var cur = unit is "USD" or "$" ? "$" : unit is "CNY" or "¥" ? "¥" : unit is "EUR" or "€" ? "€" : unit;
+        return v.Value.ToString("N2", De) + " " + cur;
     }
 
     public static string Percent(double? frac)
     {
         if (frac is null) return "–";
-        return (frac.Value * 100).ToString("0.#", CultureInfo.GetCultureInfo("de-DE")) + " %";
+        return (frac.Value * 100).ToString("0.#", De) + " %";
     }
 }

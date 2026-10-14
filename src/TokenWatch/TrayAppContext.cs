@@ -8,59 +8,118 @@ internal sealed class TrayAppContext : ApplicationContext
     private readonly PollingEngine _engine = new();
     private readonly NotifyIcon _tray;
     private readonly PopupForm _popup;
+    private readonly SynchronizationContext _ui;
     private SettingsForm? _settings;
-    private readonly System.Windows.Forms.Timer _tooltipTimer = new() { Interval = 5000 };
     private FileSystemWatcher? _configWatcher;
-    private readonly System.Windows.Forms.Timer _reloadDebounce = new() { Interval = 1500 };
+    private readonly System.Windows.Forms.Timer _reloadDebounce = new() { Interval = 1200 };
+    private readonly System.Windows.Forms.Timer _iconTimer = new() { Interval = 5000 };
+    private IntPtr _iconHandle = IntPtr.Zero;
+    private string _iconKey = "";
+    private readonly EventWaitHandle _showEvent;
+    private readonly RegisteredWaitHandle _showWait;
+    private int _configReloads;
+    private DateTime _lastStatusWriteUtc = DateTime.MinValue;
 
     public TrayAppContext()
     {
-        _popup = new PopupForm(this);
+        _popup = new PopupForm();
+        // Creating the first control installs the WinForms SynchronizationContext on this thread.
+        // Marshalling through it works even before any window handle exists (the old
+        // popup.BeginInvoke silently dropped balloons and updates until the first hover).
+        _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+
+        _popup.Canvas.RefreshAllClicked += () => _engine.ForceRefresh();
+        _popup.Canvas.RowClicked += id => _engine.ForceRefresh(id);
+        _popup.Canvas.SettingsClicked += () =>
+        {
+            _popup.HidePopup();
+            ShowSettings();
+        };
+        _popup.Canvas.PinClicked += () =>
+        {
+            _popup.Canvas.Pinned = !_popup.Canvas.Pinned;
+            _popup.Canvas.Invalidate();
+        };
 
         _tray = new NotifyIcon
         {
-            Text = "TokenWatch",
-            Icon = IconFactory.Get(Health.Unknown, null),
+            Text = "", // the hover popup replaces the native tooltip (which would overlap it)
             Visible = true,
             ContextMenuStrip = BuildMenu()
         };
-        _tray.MouseMove += (_, _) => ShowPopup();
+        _tray.MouseMove += (_, _) => OnTrayHover();
+        _tray.MouseDown += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Right) _popup.HidePopup();
+        };
         _tray.MouseClick += (_, e) =>
         {
-            if (e.Button == MouseButtons.Left) TogglePopup();
+            if (e.Button == MouseButtons.Left) TogglePinned();
         };
-        _tray.BalloonTipClicked += (_, _) => ShowPopup();
+        _tray.BalloonTipClicked += (_, _) => ShowPinned();
 
-        _engine.Updated += OnEngineUpdated;
-        _engine.CritEntered += OnCritEntered;
-        _tooltipTimer.Tick += (_, _) => UpdateTrayVisual();
+        _engine.Updated += _ => _ui.Post(_ => OnEngineChanged(), null);
+        _engine.CritEntered += (view, msg) => _ui.Post(_ => ShowCritBalloon(view, msg), null);
 
-        // Apply external config.json changes live (e.g. TokenWatch.exe --import from a sync job)
-        _reloadDebounce.Tick += (_, _) => { _reloadDebounce.Stop(); ReloadAccounts(); };
+        _reloadDebounce.Tick += (_, _) =>
+        {
+            _reloadDebounce.Stop();
+            if (!_store.TryReload()) return;
+            _configReloads++;
+            ReloadAccounts();
+            WriteStatus(force: true);
+        };
+        _iconTimer.Tick += (_, _) =>
+        {
+            UpdateTrayVisual();
+            WriteStatus();
+        };
+        WatchConfig();
+
+        // a second start of the exe signals this event → open the overview
+        _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, Program.ShowEventName);
+        _showWait = ThreadPool.RegisterWaitForSingleObject(_showEvent,
+            (_, _) => _ui.Post(_ => ShowPinned(), null), null, Timeout.Infinite, false);
+
+        UpdateTrayVisual();
+        ReloadAccounts();
+        _engine.Start();
+        _iconTimer.Start();
+    }
+
+    public ConfigStore Store => _store;
+    public PollingEngine Engine => _engine;
+
+    /// <summary>
+    /// Picks up config.json changes from outside (e.g. <c>TokenWatch.exe --import</c> from a
+    /// token-sync job). The importer replaces the file atomically (write tmp + rename), which
+    /// raises Renamed/Created – not Changed – so all three are watched.
+    /// </summary>
+    private void WatchConfig()
+    {
         try
         {
             var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TokenWatch");
             Directory.CreateDirectory(dir);
             _configWatcher = new FileSystemWatcher(dir, "config.json")
             {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
                 EnableRaisingEvents = true
             };
-            _configWatcher.Changed += (_, _) =>
+            void Kick() => _ui.Post(_ =>
             {
                 _reloadDebounce.Stop();
                 _reloadDebounce.Start();
-            };
+            }, null);
+            _configWatcher.Changed += (_, _) => Kick();
+            _configWatcher.Created += (_, _) => Kick();
+            _configWatcher.Renamed += (_, _) => Kick();
         }
-        catch { /* Watcher ist optional – Einstellungen-Dialog lädt ohnehin neu */ }
-
-        ReloadAccounts();
-        _engine.Start();
-        _tooltipTimer.Start();
+        catch
+        {
+            // optional – the settings dialog reloads anyway
+        }
     }
-
-    public ConfigStore Store => _store;
-    public PollingEngine Engine => _engine;
 
     public void ReloadAccounts()
     {
@@ -69,8 +128,7 @@ internal sealed class TrayAppContext : ApplicationContext
             .Select(a => (a, _store.PlainKey(a)))
             .ToList();
         _engine.Reconfigure(accs);
-        UpdateTrayVisual();
-        _popup.Rebuild();
+        OnEngineChanged();
     }
 
     public void ShowSettings()
@@ -90,8 +148,8 @@ internal sealed class TrayAppContext : ApplicationContext
     private ContextMenuStrip BuildMenu()
     {
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Übersicht anzeigen", null, (_, _) => ShowPopup());
-        menu.Items.Add("Jetzt aktualisieren", null, (_, _) => { RefreshNow(); ShowPopup(); });
+        menu.Items.Add("Übersicht anheften", null, (_, _) => ShowPinned());
+        menu.Items.Add("Jetzt aktualisieren", null, (_, _) => RefreshNow());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Einstellungen…", null, (_, _) => ShowSettings());
         menu.Items.Add(new ToolStripSeparator());
@@ -99,82 +157,126 @@ internal sealed class TrayAppContext : ApplicationContext
         return menu;
     }
 
-    public void ShowPopup()
+    private void OnTrayHover()
     {
-        var views = _engine.GetView();
-        _popup.UpdateData(views);
-        _popup.ShowNear(Cursor.Position);
-    }
-
-    private void TogglePopup()
-    {
-        if (_popup.Visible) _popup.HidePopup();
-        else ShowPopup();
-    }
-
-    private void OnEngineUpdated(Guid _)
-    {
-        try
+        if (_popup.Visible)
         {
-            _popup.BeginInvoke(() =>
-            {
-                _popup.UpdateData(_engine.GetView());
-                UpdateTrayVisual();
-            });
+            _popup.KeepAlive();
+            return;
         }
-        catch (ObjectDisposedException) { }
-        catch (InvalidOperationException) { }
+        _popup.SetData(_engine.GetView());
+        _popup.ShowAt(Cursor.Position);
     }
 
-    private void OnCritEntered(AccountView view, string message)
+    private void ShowPinned()
     {
-        try
+        if (!_popup.Visible)
         {
-            _popup.BeginInvoke(() =>
-            {
-                if (!_store.Settings.ShowCritBalloons) return;
-                _tray.BalloonTipTitle = $"TokenWatch – {view.Config.Name}";
-                _tray.BalloonTipText = message.Length > 250 ? message[..250] : message;
-                _tray.BalloonTipIcon = ToolTipIcon.Warning;
-                _tray.ShowBalloonTip(8000);
-            });
+            _popup.SetData(_engine.GetView());
+            _popup.ShowAt(Cursor.Position);
         }
-        catch (ObjectDisposedException) { }
-        catch (InvalidOperationException) { }
+        _popup.Canvas.Pinned = true;
+        _popup.Canvas.Invalidate();
+    }
+
+    private void TogglePinned()
+    {
+        if (_popup.Visible && _popup.Canvas.Pinned)
+            _popup.HidePopup();
+        else
+            ShowPinned();
+    }
+
+    private void OnEngineChanged()
+    {
+        if (_popup.Visible) _popup.SetData(_engine.GetView());
+        UpdateTrayVisual();
+    }
+
+    private void ShowCritBalloon(AccountView view, string message)
+    {
+        if (!_store.Settings.ShowCritBalloons) return;
+        _tray.BalloonTipTitle = $"TokenWatch – {view.Config.Name}";
+        _tray.BalloonTipText = message.Length > 250 ? message[..250] : message;
+        _tray.BalloonTipIcon = ToolTipIcon.Warning;
+        _tray.ShowBalloonTip(8000);
     }
 
     private void UpdateTrayVisual()
     {
         var views = _engine.GetView();
-        // views are sorted by severity (Crit first)
-        var worst = views.Count == 0 ? Health.Unknown : views[0].Health;
-        double? worstFrac = views.Count > 0
-            ? views[0].Snapshot?.Windows.FirstOrDefault()?.UsedFraction
-            : null;
-        _tray.Icon = IconFactory.Get(worst, worstFrac);
-
-        var lines = new List<string> { "TokenWatch" };
-        foreach (var v in views.Take(6))
+        int crit = 0, warn = 0;
+        var anyData = false;
+        foreach (var v in views)
         {
-            var status = v.Snapshot?.Ok == false ? "FEHLER" : Theme.HealthLabel(v.Health);
-            var main = v.Snapshot?.Windows.FirstOrDefault();
-            var val = main is null ? "" :
-                main.IsBalance ? $" · {Formatting.Money(main.Remaining, main.Unit)}" : $" · {Formatting.Percent(main.UsedFraction)}";
-            lines.Add($"{v.Config.Name}: {status}{val}");
+            if (v.Display is not null) anyData = true;
+            if (v.Health == Health.Crit) crit++;
+            else if (v.Health == Health.Warn && !v.IsStale) warn++;
         }
-        if (views.Count == 0) lines.Add("Keine Konten – Rechtsklick → Einstellungen");
-        var text = string.Join("\n", lines);
-        _tray.Text = text.Length > 127 ? text[..124] + "…" : text;
+        var size = Math.Max(16, SystemInformation.SmallIconSize.Width);
+        var key = $"{crit}|{warn}|{anyData}|{size}";
+        if (key == _iconKey) return;
+
+        var icon = IconFactory.Create(crit, warn, anyData, size, out var handle);
+        _tray.Icon = icon;
+        IconFactory.Destroy(_iconHandle); // the shell keeps its own copy
+        _iconHandle = handle;
+        _iconKey = key;
+    }
+
+    /// <summary>
+    /// Diagnostics for remote checks: %APPDATA%\TokenWatch\status.json with account names and
+    /// states (never keys). Written after config reloads and at most once a minute.
+    /// </summary>
+    private void WriteStatus(bool force = false)
+    {
+        if (!force && (DateTime.UtcNow - _lastStatusWriteUtc).TotalSeconds < 60) return;
+        _lastStatusWriteUtc = DateTime.UtcNow;
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TokenWatch");
+            var path = Path.Combine(dir, "status.json");
+            var status = new
+            {
+                pid = Environment.ProcessId,
+                version = Application.ProductVersion,
+                writtenAt = DateTimeOffset.Now,
+                configReloads = _configReloads,
+                accounts = _engine.GetView().Select(v => new
+                {
+                    name = v.Config.Name,
+                    provider = v.Config.Provider.ToString(),
+                    health = v.Health.ToString(),
+                    stale = v.IsStale,
+                    failure = v.Failure.ToString(),
+                    lastGood = v.LastGood?.AtUtc.ToLocalTime(),
+                    windows = v.Display?.Windows.Count ?? 0
+                })
+            };
+            var json = System.Text.Json.JsonSerializer.Serialize(status,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path + ".tmp", json);
+            File.Move(path + ".tmp", path, true);
+        }
+        catch
+        {
+            // diagnostics only
+        }
     }
 
     protected override void ExitThreadCore()
     {
-        _tooltipTimer.Stop();
+        _showWait.Unregister(null);
+        _showEvent.Dispose();
+        _iconTimer.Stop();
+        _reloadDebounce.Stop();
         _configWatcher?.Dispose();
         _tray.Visible = false;
+        _tray.Dispose();
         _popup.HidePopup();
         _popup.Dispose();
         _engine.Dispose();
+        IconFactory.Destroy(_iconHandle);
         base.ExitThreadCore();
     }
 }

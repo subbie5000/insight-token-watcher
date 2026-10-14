@@ -90,6 +90,7 @@ public sealed class ZaiPoller : IAccountPoller
                     // z.ai puts unit/number directly on the limit entry (unit 3=hours, 4=days, 6=weeks)
                     var wUnit = ProviderInfo.JsonDouble(lim, "unit");
                     var wNumber = ProviderInfo.JsonDouble(lim, "number");
+                    double? windowMinutes = null;
                     if (wUnit is not null && wNumber is not null)
                     {
                         label = ((int)wUnit.Value, wNumber.Value) switch
@@ -101,13 +102,30 @@ public sealed class ZaiPoller : IAccountPoller
                             (6, _) => "Wochen-Kontingent",
                             _ => label
                         };
+                        windowMinutes = (int)wUnit.Value switch
+                        {
+                            3 => wNumber.Value * 60,
+                            4 => wNumber.Value * 1440,
+                            6 => wNumber.Value * 10080,
+                            _ => null
+                        };
                     }
                     else if (lim.TryGetProperty("window", out var win))
                     {
                         var num = ProviderInfo.JsonDouble(win, "number");
                         var unit = ProviderInfo.JsonString(win, "unit") ?? "";
                         if (num is not null && !string.IsNullOrEmpty(unit))
+                        {
                             label += $" ({num:0} {unit})";
+                            windowMinutes = unit.ToLowerInvariant() switch
+                            {
+                                "hours" or "hour" => num * 60,
+                                "days" or "day" => num * 1440,
+                                "weeks" or "week" => num * 10080,
+                                "minutes" or "minute" => num,
+                                _ => null
+                            };
+                        }
                     }
 
                     snap.Windows.Add(new QuotaWindow
@@ -119,6 +137,7 @@ public sealed class ZaiPoller : IAccountPoller
                         Total = usage,
                         Remaining = remaining ?? (usage is > 0 && frac is not null ? usage.Value * (1 - frac.Value) : null),
                         ResetAtUtc = reset,
+                        WindowMinutes = windowMinutes,
                         Note = plan is not null ? $"Plan: {plan}" : null
                     });
                 }
