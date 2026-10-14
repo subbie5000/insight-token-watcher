@@ -13,6 +13,9 @@ Reset pro Konto – so siehst du sofort, ob dein Kontingent bis zum Reset reicht
 | Moonshot / Kimi Guthaben (Prepaid) | `GET api.moonshot.ai/v1/users/me/balance` | Guthaben (kein Reset) |
 | GLM / z.ai / BigModel | `GET {base}/api/monitor/usage/quota/limit` | Token-/Credit-Kontingente mit Reset |
 | DeepSeek | `GET api.deepseek.com/user/balance` | Guthaben (kein Reset) |
+| OpenAI | `GET /v1/organization/costs` (Admin-Key) oder Legacy `credit_grants` | Ausgaben 30 d / Guthaben |
+| OpenRouter | `GET /api/v1/key` + `GET /api/v1/credits` | Key-Limit + Guthaben |
+| OpenAI-kompatibel (generisch: Groq, Together, Cerebras, …) | `x-ratelimit-*`-Header eines Mini-`chat/completions`-Calls | Requests-/Token-Limits |
 
 ## Installation
 

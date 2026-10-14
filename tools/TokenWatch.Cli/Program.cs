@@ -96,9 +96,13 @@ foreach (var (cfg, key) in accounts)
     }
     foreach (var w in snap.Windows)
     {
-        var val = w.IsBalance
-            ? Formatting.Money(w.Remaining, w.Unit)
-            : $"{Formatting.Percent(w.UsedFraction)} verbraucht" +
+        string val;
+        if (w.IsInfoOnly)
+            val = w.Remaining is not null ? Formatting.Money(w.Remaining, w.Unit) : "";
+        else if (w.IsBalance)
+            val = Formatting.Money(w.Remaining, w.Unit);
+        else
+            val = $"{Formatting.Percent(w.UsedFraction)} verbraucht" +
               (w.Remaining is not null && w.Total is not null
                   ? $"  (noch {Formatting.Count(w.Remaining)} von {Formatting.Count(w.Total)} {w.Unit})" : "");
         var reset = w.ResetAtUtc is null ? "" :

@@ -16,6 +16,9 @@ public static class ProviderInfo
         ProviderKind.Moonshot => "Moonshot / Kimi Guthaben",
         ProviderKind.Zai => "GLM (z.ai / BigModel)",
         ProviderKind.DeepSeek => "DeepSeek",
+        ProviderKind.OpenAi => "OpenAI",
+        ProviderKind.OpenRouter => "OpenRouter",
+        ProviderKind.GenericOpenAi => "OpenAI-kompatibel (generisch)",
         _ => k.ToString()
     };
 
@@ -26,6 +29,9 @@ public static class ProviderInfo
         ProviderKind.Moonshot => "https://api.moonshot.ai",
         ProviderKind.Zai => "https://api.z.ai",
         ProviderKind.DeepSeek => "https://api.deepseek.com",
+        ProviderKind.OpenAi => "https://api.openai.com",
+        ProviderKind.OpenRouter => "https://openrouter.ai",
+        ProviderKind.GenericOpenAi => "",
         _ => ""
     };
 
@@ -36,6 +42,9 @@ public static class ProviderInfo
         ProviderKind.Moonshot => "Standard: https://api.moonshot.ai · China: https://api.moonshot.cn",
         ProviderKind.Zai => "Global: https://api.z.ai · BigModel China: https://open.bigmodel.cn",
         ProviderKind.DeepSeek => "Standard: https://api.deepseek.com",
+        ProviderKind.OpenAi => "Standard: https://api.openai.com · Org-Admin-Key (sk-admin-…) empfohlen",
+        ProviderKind.OpenRouter => "Standard: https://openrouter.ai",
+        ProviderKind.GenericOpenAi => "Basis-URL mit /v1, z.B. https://api.groq.com/openai/v1 · Modell (Ping) setzen!",
         _ => ""
     };
 
@@ -51,6 +60,9 @@ public static class ProviderInfo
         ProviderKind.Moonshot => new MoonshotPoller(),
         ProviderKind.Zai => new ZaiPoller(),
         ProviderKind.DeepSeek => new DeepSeekPoller(),
+        ProviderKind.OpenAi => new OpenAiPoller(),
+        ProviderKind.OpenRouter => new OpenRouterPoller(),
+        ProviderKind.GenericOpenAi => new GenericOpenAiPoller(),
         _ => throw new ArgumentOutOfRangeException(nameof(k))
     };
 

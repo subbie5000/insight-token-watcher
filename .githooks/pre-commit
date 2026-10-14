@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Blocks commits that contain credentials or private network data.
+# Activate once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+
+PAT='sk-ant-[A-Za-z0-9_-]{20,}|sk-or-[A-Za-z0-9_-]{20,}|sk-kimi-[A-Za-z0-9_-]{20,}|sk-admin-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{30,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN|192\.168\.[0-9]|10\.0\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]'
+
+if git diff --cached --diff-filter=ACMR -U0 -- . ':(exclude).githooks/pre-commit' | grep -E "$PAT" > /dev/null 2>&1; then
+  echo "✗ commit rejected: possible secret or private network data in staged changes" >&2
+  git diff --cached --diff-filter=ACMR -U0 -- . ':(exclude).githooks/pre-commit' | grep -nE "$PAT" | head -5 >&2
+  exit 1
+fi
+exit 0

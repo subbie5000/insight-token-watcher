@@ -40,11 +40,14 @@ internal static class Theme
 
     public static Color ProviderColor(ProviderKind k) => k switch
     {
-        ProviderKind.Anthropic => Color.FromArgb(217, 119, 87),   // Claude-Orange
+        ProviderKind.Anthropic => Color.FromArgb(217, 119, 87),   // Claude orange
         ProviderKind.KimiCode => Color.FromArgb(86, 156, 255),
         ProviderKind.Moonshot => Color.FromArgb(86, 156, 255),
-        ProviderKind.Zai => Color.FromArgb(148, 103, 255),        // Violett
+        ProviderKind.Zai => Color.FromArgb(148, 103, 255),        // violet
         ProviderKind.DeepSeek => Color.FromArgb(72, 199, 176),    // teal
+        ProviderKind.OpenAi => Color.FromArgb(116, 185, 165),     // OpenAI green-teal
+        ProviderKind.OpenRouter => Color.FromArgb(230, 126, 80),  // OpenRouter coral
+        ProviderKind.GenericOpenAi => Color.FromArgb(150, 150, 160),
         _ => Muted
     };
 }

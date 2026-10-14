@@ -93,17 +93,21 @@ internal sealed class AccountCardControl : Control
 
         // Row 1: label + values on the right
         g.DrawString(win.Label, Theme.BodyFont, new SolidBrush(Theme.Text), x, y);
-        string right = win.IsBalance
-            ? Formatting.Money(win.Remaining, win.Unit)
-            : $"{Formatting.Percent(win.UsedFraction)} verbraucht";
-        if (!win.IsBalance && win.Remaining is not null && win.Total is not null)
+        string right;
+        if (win.IsInfoOnly)
+            right = win.Remaining is not null ? Formatting.Money(win.Remaining, win.Unit) : "";
+        else if (win.IsBalance)
+            right = Formatting.Money(win.Remaining, win.Unit);
+        else
+            right = $"{Formatting.Percent(win.UsedFraction)} verbraucht";
+        if (!win.IsBalance && !win.IsInfoOnly && win.Remaining is not null && win.Total is not null)
             right += $"  ·  noch {Formatting.Count(win.Remaining)} von {Formatting.Count(win.Total)} {win.Unit}";
         var rs = g.MeasureString(right, Theme.NumFont);
         g.DrawString(right, Theme.NumFont, new SolidBrush(Theme.Text), x + barW - rs.Width, y);
         y += 18;
 
         // Row 2: bar (only for quota windows with utilization)
-        if (!win.IsBalance)
+        if (!win.IsBalance && !win.IsInfoOnly)
         {
             var barRect = new RectangleF(x, y + 3, barW, 8);
             using (var trackPath = RoundedF(barRect, 4))

@@ -69,6 +69,10 @@ public sealed class PlainAccountFile
             case "moonshot" or "moonshotbalance" or "kimibalance": kind = ProviderKind.Moonshot; return true;
             case "zai" or "glm" or "bigmodel" or "zhipu": kind = ProviderKind.Zai; return true;
             case "deepseek": kind = ProviderKind.DeepSeek; return true;
+            case "openai": kind = ProviderKind.OpenAi; return true;
+            case "openrouter": kind = ProviderKind.OpenRouter; return true;
+            case "genericopenai" or "openaikompatibel" or "openaicompatible" or "groq" or "together" or "cerebras":
+                kind = ProviderKind.GenericOpenAi; return true;
             default: kind = default; return false;
         }
     }

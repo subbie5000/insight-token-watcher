@@ -176,10 +176,12 @@ internal sealed class AccountEditDialog : Form
     {
         var kind = (ProviderKind)_provider.SelectedIndex;
         var anthropic = kind == ProviderKind.Anthropic;
+        var needsModel = anthropic || kind == ProviderKind.GenericOpenAi;
         _auth.Visible = anthropic;
         _authLabel.Visible = anthropic;
-        _model.Visible = anthropic;
-        _modelLabel.Visible = anthropic;
+        _model.Visible = needsModel;
+        _modelLabel.Visible = needsModel;
+        _modelLabel.Text = anthropic ? "Modell (Ping):" : "Modell (Ping) *:";
         _urlHint.Text = ProviderInfo.BaseUrlHint(kind);
     }
 

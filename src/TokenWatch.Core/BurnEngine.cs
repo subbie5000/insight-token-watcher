@@ -77,6 +77,14 @@ public static class Evaluator
     public static WindowEvaluation Evaluate(QuotaWindow w, IReadOnlyList<Sample> samples, DateTimeOffset now)
     {
         var ev = new WindowEvaluation();
+
+        if (w.IsInfoOnly)
+        {
+            ev.Health = Health.Ok;
+            ev.Verdict = w.Note ?? "";
+            return ev;
+        }
+
         var rate = BurnMath.SlopePerMinute(samples, w.IsBalance, now);
         ev.HasRate = rate is > 1e-9;
         ev.RatePerMin = rate ?? 0;

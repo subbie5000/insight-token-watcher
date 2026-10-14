@@ -8,7 +8,10 @@ public enum ProviderKind
     KimiCode,
     Moonshot,
     Zai,
-    DeepSeek
+    DeepSeek,
+    OpenAi,
+    OpenRouter,
+    GenericOpenAi
 }
 
 public enum AuthKind
@@ -53,6 +56,9 @@ public sealed class QuotaWindow
     public string Unit { get; set; } = "";
     public DateTimeOffset? ResetAtUtc { get; set; }
     public string? Note { get; set; }
+
+    /// <summary>Informational value only (e.g. spend totals) – no bar, no forecast.</summary>
+    public bool IsInfoOnly { get; set; }
 }
 
 public sealed class AccountSnapshot

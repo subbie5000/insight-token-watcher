@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] - 2026-10-14
+
+### Added
+- New providers: OpenAI (organization costs via Admin key, legacy credit_grants
+  fallback), OpenRouter (key limit + credit balance), and a generic
+  OpenAI-compatible probe parsing `x-ratelimit-*` headers (Groq, Together, …).
+- Informational windows (spend totals without a known limit) render without bar/forecast.
+
+### Fixed
+- Anthropic: meta headers (`7d-surpassed-threshold`, `overage-*`) no longer appear
+  as phantom windows; statuses shown in German.
+- z.ai: window labels derived from the entry's own unit/number fields
+  (5-hour / weekly quota); auth errors reported as HTTP 200 with `code:401` are
+  detected.
+- Remaining counts now read "noch X von Y" instead of an ambiguous fraction.
+
 ## [1.0.0] - 2026-10-14
 
 ### Added

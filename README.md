@@ -16,6 +16,9 @@ Supported providers:
 | Moonshot / Kimi balance (prepaid) | `GET api.moonshot.ai/v1/users/me/balance` | Balance (no reset) |
 | GLM (z.ai / BigModel) | `GET {base}/api/monitor/usage/quota/limit` | Token/credit quotas with reset |
 | DeepSeek | `GET api.deepseek.com/user/balance` | Balance (no reset) |
+| OpenAI | `GET /v1/organization/costs` (Admin key) or legacy `credit_grants` | Spend 30 d / balance |
+| OpenRouter | `GET /api/v1/key` + `GET /api/v1/credits` | Key limit + balance |
+| OpenAI-compatible (generic: Groq, Together, Cerebras, …) | `x-ratelimit-*` headers on a minimal `chat/completions` call | Requests/tokens limits |
 
 **UI language: German.** The core library, tests and docs are English; the tray UI
 strings are German. PRs for i18n are welcome.

@@ -363,6 +363,86 @@ Run("Evaluator: low balance = CRIT", () =>
     Check(ev.Health == Health.Crit, "expected Crit, got " + ev.Health + " / " + ev.Verdict);
 });
 
+// ---------- OpenAI ----------
+
+Run("OpenAI: Admin-Costs summieren (30d)", () =>
+{
+    var json = """
+    { "object": "page", "data": [
+      { "start_time": 1789000000, "end_time": 1789086400, "results": [
+        { "amount": { "value": 1.25, "currency": "usd" }, "line_item": null },
+        { "amount": { "value": 0.75, "currency": "usd" }, "line_item": "gpt-5" } ] },
+      { "start_time": 1789086400, "end_time": 1789172800, "results": [
+        { "amount": { "value": 2.00, "currency": "usd" }, "line_item": "gpt-5" } ] }
+    ], "has_more": false }
+    """;
+    var s = OpenAiPoller.ParseCosts(Guid.NewGuid(), json);
+    Check(s.Ok, "not ok");
+    var w = s.Windows[0];
+    Check(w.IsInfoOnly, "info only");
+    Check(Math.Abs(w.Remaining!.Value - 4.00) < 1e-9, "Summe 4.00, kam " + w.Remaining);
+});
+
+Run("OpenAI: credit_grants Fallback", () =>
+{
+    var json = """{"object":"credit_grants","total_granted":120.0,"total_used":97.5,"total_available":22.5}""";
+    var s = OpenAiPoller.ParseCreditGrants(Guid.NewGuid(), json);
+    Check(s.Ok, "not ok");
+    Check(s.Windows[0].IsBalance, "balance");
+    Check(Math.Abs(s.Windows[0].Remaining!.Value - 22.5) < 1e-9, "22.5");
+});
+
+// ---------- OpenRouter ----------
+
+Run("OpenRouter: Key-Limit + Credits", () =>
+{
+    var keyJson = """
+    { "data": { "label": "main", "usage": 12.34, "usage_daily": 0.87, "usage_weekly": 4.20,
+                "usage_monthly": 12.34, "limit": 30.0, "limit_remaining": 17.66,
+                "is_free_tier": false, "rate_limit": { "requests": 200, "interval": "10s" } } }
+    """;
+    var creditsJson = """{ "data": { "total_credits": 25.0, "total_usage": 12.34 } }""";
+    var doc = System.Text.Json.JsonDocument.Parse(keyJson);
+    var d = doc.RootElement.GetProperty("data");
+    var limit = ProviderInfo.JsonDouble(d, "limit");
+    var remaining = ProviderInfo.JsonDouble(d, "limit_remaining");
+    Check(limit == 30.0 && remaining == 17.66, "key fields");
+    var cdoc = System.Text.Json.JsonDocument.Parse(creditsJson);
+    var cd = cdoc.RootElement.GetProperty("data");
+    var credits = ProviderInfo.JsonDouble(cd, "total_credits");
+    var usage = ProviderInfo.JsonDouble(cd, "total_usage");
+    Check(Math.Abs(credits!.Value - usage!.Value - 12.66) < 1e-9, "balance 12.66");
+});
+
+// ---------- Generic OpenAI-compatible ----------
+
+Run("GenericOpenAi: x-ratelimit header incl. duration reset", () =>
+{
+    var now = DateTimeOffset.UtcNow;
+    var h = new Dictionary<string, string>
+    {
+        ["x-ratelimit-limit-requests"] = "500",
+        ["x-ratelimit-remaining-requests"] = "499",
+        ["x-ratelimit-reset-requests"] = "2.5s",
+        ["x-ratelimit-limit-tokens"] = "100000",
+        ["x-ratelimit-remaining-tokens"] = "40000",
+        ["x-ratelimit-reset-tokens"] = "6m0s",
+    };
+    var s = GenericOpenAiPoller.ParseHeaders(Guid.NewGuid(), h, 200, "{}");
+    Check(s.Ok, "not ok");
+    Check(s.Windows.Count == 2, "2 windows");
+    var t = s.Windows.First(w => w.Key == "tokens");
+    Check(Math.Abs(t.UsedFraction!.Value - 0.6) < 1e-9, "60 % used");
+    var dt = t.ResetAtUtc!.Value - now;
+    Check(dt.TotalMinutes is > 5.9 and < 6.1, "reset ≈ 6 min, got " + dt.TotalMinutes);
+});
+
+Run("GenericOpenAi: without headers = readable error", () =>
+{
+    var s = GenericOpenAiPoller.ParseHeaders(Guid.NewGuid(), new Dictionary<string, string>(), 401, "{}");
+    Check(!s.Ok && s.Error!.Contains("401"), "error with status code");
+});
+
 // ---------- formatting ----------
 
 Run("formatting: time spans", () =>

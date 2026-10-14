@@ -5,3 +5,5 @@ dist-cli/
 *.user
 .vs/
 *.zip
+import.json
+*.secrets.json
