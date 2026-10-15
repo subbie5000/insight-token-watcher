@@ -40,6 +40,15 @@ internal sealed class TrayAppContext : ApplicationContext
             _popup.Canvas.Pinned = !_popup.Canvas.Pinned;
             _popup.Canvas.Invalidate();
         };
+        _popup.Canvas.PopupMoved += loc =>
+        {
+            _popup.PreferredLocation = loc;
+            _store.Settings.PopupX = loc.X;
+            _store.Settings.PopupY = loc.Y;
+            _store.Save();
+        };
+        if (_store.Settings.PopupX is { } px && _store.Settings.PopupY is { } py)
+            _popup.PreferredLocation = new Point(px, py);
 
         _tray = new NotifyIcon
         {

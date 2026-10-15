@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-10-15
+
+### Added
+- The popup can be dragged by its title band to any spot on any monitor.
+  Dragging pins it automatically; the position is remembered
+  (`Settings.PopupX/PopupY`) and restored on next show. Falls back to the
+  tray anchor when the monitor is gone. Data refreshes no longer move the
+  form mid-drag.
+
 ## [1.4.0] - 2026-10-14
 
 ### Changed

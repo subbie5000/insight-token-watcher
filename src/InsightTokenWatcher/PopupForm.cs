@@ -20,6 +20,9 @@ internal sealed class PopupForm : Form
     private Point _anchor;
     private DateTime _lastInsideUtc;
 
+    /// <summary>User-parked position (drag). When set and visible on any screen, it wins over the tray anchor.</summary>
+    public Point? PreferredLocation { get; set; }
+
     public PopupCanvas Canvas { get; } = new() { Dock = DockStyle.Fill };
 
     public PopupForm()
@@ -103,10 +106,27 @@ internal sealed class PopupForm : Form
 
     private void ApplyBounds()
     {
+        if (Canvas.IsDragging) return; // don't yank the form mid-drag
+        var w = Theme.S(PopupCanvas.LogicalWidth);
+
+        // parked by the user via drag: keep that spot unless the monitor is gone
+        if (PreferredLocation is { } p)
+        {
+            var h0 = Canvas.DesiredHeight;
+            var target = new Rectangle(p.X, p.Y, w, h0);
+            var screen0 = Screen.AllScreens.FirstOrDefault(s => s.Bounds.IntersectsWith(target));
+            if (screen0 is not null)
+            {
+                var wa0 = screen0.WorkingArea;
+                var hPark = Math.Min(h0, (int)(wa0.Height * 0.85));
+                SetBounds(p.X, p.Y, w, hPark);
+                return;
+            }
+        }
+
         var screen = Screen.FromPoint(_anchor);
         var wa = screen.WorkingArea;
         var full = screen.Bounds;
-        var w = Theme.S(PopupCanvas.LogicalWidth);
         var h = Math.Min(Canvas.DesiredHeight, (int)(wa.Height * 0.85));
         var gap = Theme.S(10);
 

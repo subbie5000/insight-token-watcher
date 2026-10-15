@@ -41,6 +41,8 @@ API keys are stored DPAPI-encrypted (`%APPDATA%\InsightTokenWatcher\config.json`
 ## Usage
 
 - **Hover the tray icon** → popup with all accounts; **left-click** pins it open.
+- **Drag the popup by its title band** to park it anywhere, on any monitor. The position
+  is remembered across restarts.
 - One row per account: the **short window** (e.g. 5 h) in the left column, the
   **long window** (week) in the right, each with bar, percentage and reset countdown —
   so the same kind of window lines up across all accounts. Balance accounts show the

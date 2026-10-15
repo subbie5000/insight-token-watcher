@@ -35,6 +35,8 @@ Die API-Schlüssel liegen DPAPI-verschlüsselt (pro Windows-Benutzer) in
 ## Bedienung
 
 - **Mouse-over aufs Tray-Icon** → Popup mit allen Konten.
+- **Popup am Titel ziehen** → an beliebiger Stelle auf beliebigem Monitor parken
+  (heftet automatisch an; Position bleibt über Neustarts erhalten).
 - **Klick auf ein Konto** im Popup → sofortige Neumessung.
 - **Farben**: lime = OK, amber = knapp, rot = kritisch/Fehler.
 - Pro Fenster: Balken + „verbraucht X %“, Prognosezeile

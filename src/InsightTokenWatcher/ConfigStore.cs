@@ -8,6 +8,10 @@ internal sealed class AppSettings
     public bool ShowCritBalloons { get; set; } = true;
     public bool Autostart { get; set; }
     public int BurnWindowMinutes { get; set; } = 60;
+
+    /// <summary>Position where the user parked the popup by dragging it (null = near the tray).</summary>
+    public int? PopupX { get; set; }
+    public int? PopupY { get; set; }
 }
 
 internal sealed class ConfigFile

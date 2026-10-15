@@ -22,7 +22,7 @@ internal sealed class PopupCanvas : Control
     private const string ShortColumn = "5 h";
     private const string LongColumn = "Woche";
 
-    private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar }
+    private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header }
     private enum RowKind { Data, Loading, Error }
     private enum RowState { Ok, Warn, Crit, Error, Stale, Pending }
 
@@ -49,6 +49,9 @@ internal sealed class PopupCanvas : Control
     private readonly ToolTip _tip;
     private string _tipText = "";
     private Zone _hover = Zone.None, _pressed = Zone.None;
+    private bool _moving;          // title-band drag: moves the whole popup (auto-pins)
+    private bool _moveEngaged;     // past the drag threshold
+    private Point _moveOffset;     // mouse position within the form at drag start
     private int _hoverRow = -1, _pressedRow = -1;
     private bool _dragging;
     private int _dragStartY;
@@ -56,7 +59,10 @@ internal sealed class PopupCanvas : Control
     private Point _lastMouse;
 
     public bool Pinned { get; set; }
-    public bool IsDragging => _dragging;
+    public bool IsDragging => _dragging || _moving;
+
+    /// <summary>Fired after the user dragged the popup by its title band; argument is the new form location.</summary>
+    public event Action<Point>? PopupMoved;
     public bool DrawOwnBorder { get; set; } = true;
     public DateTime Stamp { get; private set; } = DateTime.Now;
 
@@ -291,7 +297,7 @@ internal sealed class PopupCanvas : Control
         if (settings.Contains(p)) return Zone.Settings;
 
         var body = BodyRect(ClientSize);
-        if (!body.Contains(p)) return Zone.None;
+        if (!body.Contains(p)) return p.Y < S(HeaderH) ? Zone.Header : Zone.None;
         if (MaxScroll(body.Height) > 0 && p.X >= body.Right - S(14)) return Zone.Scrollbar;
 
         var cy = p.Y - body.Top + (int)Math.Round(_scroll) - S(BodyPadTop);
@@ -436,7 +442,7 @@ internal sealed class PopupCanvas : Control
 
         var area = new Rectangle(S(PadX), top, w - 2 * S(PadX), fh);
         Gfx.Text(g, $"Stand {Stamp:HH:mm:ss}", Theme.FTiny, area, Theme.Faint, TextFormatFlags.VerticalCenter);
-        var hint = Pinned ? "Angeheftet – Pin oder Tray-Icon zum Lösen" : "Klick = neu messen · Maus drüber = Details";
+        var hint = Pinned ? "Angeheftet – Pin oder Tray-Icon zum Lösen" : "Titel ziehen = parken · Hover = Details";
         Gfx.Text(g, hint, Theme.FTiny, area, Pinned ? Theme.Ok : Theme.Faint,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
     }
@@ -759,6 +765,17 @@ internal sealed class PopupCanvas : Control
         base.OnMouseDown(e);
         if (e.Button != MouseButtons.Left) return;
         _pressed = HitTest(e.Location, out _pressedRow);
+
+        if (_pressed == Zone.Header)
+        {
+            // potential move of the whole popup; engages past the drag threshold
+            _moving = true;
+            _moveEngaged = false;
+            _moveOffset = e.Location;
+            Capture = true;
+            HideTip();
+            return;
+        }
         if (_pressed != Zone.Scrollbar) return;
 
         var body = BodyRect(ClientSize);
@@ -780,6 +797,27 @@ internal sealed class PopupCanvas : Control
     {
         base.OnMouseMove(e);
         _lastMouse = e.Location;
+        if (_moving)
+        {
+            if (!_moveEngaged)
+            {
+                var sz = SystemInformation.DragSize;
+                if (Math.Abs(e.X - _moveOffset.X) < sz.Width && Math.Abs(e.Y - _moveOffset.Y) < sz.Height)
+                    return;
+                // dragging parks the popup: auto-pin so it survives the mouse leaving
+                _moveEngaged = true;
+                Pinned = true;
+                Invalidate();
+            }
+            var f = FindForm();
+            if (f is not null)
+            {
+                var sp = Cursor.Position;
+                f.Location = new Point(sp.X - _moveOffset.X, sp.Y - _moveOffset.Y);
+            }
+            Cursor = Cursors.SizeAll;
+            return;
+        }
         if (_dragging)
         {
             var body = BodyRect(ClientSize);
@@ -794,7 +832,12 @@ internal sealed class PopupCanvas : Control
         if (zone == _hover && row == _hoverRow) return;
         _hover = zone;
         _hoverRow = zone == Zone.Row ? row : -1;
-        Cursor = zone is Zone.Row or Zone.Refresh or Zone.Settings or Zone.Pin ? Cursors.Hand : Cursors.Default;
+        Cursor = zone switch
+        {
+            Zone.Row or Zone.Refresh or Zone.Settings or Zone.Pin => Cursors.Hand,
+            Zone.Header => Cursors.SizeAll,
+            _ => Cursors.Default
+        };
         HideTip();
         if (_hoverRow >= 0) _tipTimer.Start();
         Invalidate();
@@ -803,6 +846,21 @@ internal sealed class PopupCanvas : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+        if (_moving)
+        {
+            _moving = false;
+            Capture = false;
+            _pressed = Zone.None;
+            Cursor = Cursors.Default;
+            if (_moveEngaged)
+            {
+                _moveEngaged = false;
+                var f = FindForm();
+                if (f is not null) PopupMoved?.Invoke(f.Location);
+            }
+            Invalidate();
+            return;
+        }
         if (_dragging)
         {
             _dragging = false;
