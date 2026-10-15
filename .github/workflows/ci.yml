@@ -14,6 +14,6 @@ jobs:
         with:
           dotnet-version: "8.0.x"
       - name: Build
-        run: dotnet build TokenWatch.sln -c Release
+        run: dotnet build InsightTokenWatcher.sln -c Release
       - name: Test
-        run: dotnet run --project tests/TokenWatch.CoreTests -c Release --no-build
+        run: dotnet run --project tests/InsightTokenWatcher.CoreTests -c Release --no-build

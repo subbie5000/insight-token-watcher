@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-10-14
+
+### Changed
+- Renamed the app to **Insight Token Watcher** (`InsightTokenWatcher.exe`,
+  `%APPDATA%\InsightTokenWatcher`). Config, encrypted keys and history migrate
+  automatically from `%APPDATA%\TokenWatch` on first start; the autostart
+  registry entry is renamed when toggled.
+
 ## [1.3.0] - 2026-10-14
 
 ### Changed
@@ -70,5 +78,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Providers: Anthropic (unified rate-limit headers, 5h/7d windows),
   Kimi Code subscription, Moonshot/Kimi balance, GLM (z.ai / BigModel), DeepSeek.
 - Settings dialog with per-account connection test; keys stored DPAPI-encrypted.
-- Headless import (`TokenWatch.exe --import`) and `TokenWatch.Cli` for debugging.
+- Headless import (`InsightTokenWatcher.exe --import`) and `InsightTokenWatcher.Cli` for debugging.
 - Balloon warning when an account turns critical; optional autostart.

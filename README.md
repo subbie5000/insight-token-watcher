@@ -1,4 +1,4 @@
-# TokenWatch
+# Insight Token Watcher
 
 LLM quota and balances in the Windows system tray. Hover the tray icon to get a live
 popup: utilization per quota window, burn rate, projected time-to-empty and the
@@ -25,8 +25,8 @@ strings are German. PRs for i18n are welcome.
 
 ## Install
 
-1. Download `TokenWatch.exe` from [Releases](../../releases) (or build it, see below)
-   and put it anywhere, e.g. `C:\Tools\TokenWatch\TokenWatch.exe`. No .NET runtime
+1. Download `InsightTokenWatcher.exe` from [Releases](../../releases) (or build it, see below)
+   and put it anywhere, e.g. `C:\Tools\InsightTokenWatcher\InsightTokenWatcher.exe`. No .NET runtime
    needed (self-contained single file).
 2. Start it — the icon appears in the tray (possibly behind the "‹" overflow).
 3. Right-click → **Einstellungen…** → **Neu…** per account:
@@ -35,7 +35,7 @@ strings are German. PRs for i18n are welcome.
      subscription setup tokens (`sk-ant-oat…`).
 4. Optional: enable "Mit Windows starten" (autostart).
 
-API keys are stored DPAPI-encrypted (`%APPDATA%\TokenWatch\config.json`,
+API keys are stored DPAPI-encrypted (`%APPDATA%\InsightTokenWatcher\config.json`,
 `LocalMachine` scope) — never in plaintext.
 
 ## Usage
@@ -77,7 +77,7 @@ free status endpoints.
 
 ## Headless import & CLI
 
-`TokenWatch.exe --import accounts.json` imports accounts without starting the GUI
+`InsightTokenWatcher.exe --import accounts.json` imports accounts without starting the GUI
 (keys are encrypted on the fly). Format:
 
 ```json
@@ -95,18 +95,18 @@ optional: `auth` (`apikey`/`bearer`), `baseUrlOverride`, `model`, `pollSeconds`,
 Accounts are matched by name, so re-importing updates keys in place (e.g. from a
 token-rotation job); a running instance reloads the config automatically.
 
-`TokenWatch.Cli accounts.json` polls once and prints the result (handy for debugging
-credentials). On Windows, `TokenWatch.Cli --app-config` does the same against the
+`InsightTokenWatcher.Cli accounts.json` polls once and prints the result (handy for debugging
+credentials). On Windows, `InsightTokenWatcher.Cli --app-config` does the same against the
 encrypted app config.
 
-`TokenWatch.exe --render <dir> [--scale 1.5]` renders the popup with synthetic demo
+`InsightTokenWatcher.exe --render <dir> [--scale 1.5]` renders the popup with synthetic demo
 data into PNG files (plus a scroll/update stress check) — useful for UI work without
 touching the tray.
 
 ## Note on Anthropic OAuth tokens
 
 `claude` OAuth access tokens expire after hours and are rotated by whichever tool
-owns the refresh token. TokenWatch deliberately does **not** refresh tokens: the
+owns the refresh token. Insight Token Watcher deliberately does **not** refresh tokens: the
 refresh token belongs to the tool that issued the login, and consuming it elsewhere
 would break that tool. When a token expires, the account keeps showing its last
 values marked "Token abgelaufen" until a fresh token arrives — paste one, re-import
@@ -120,11 +120,11 @@ Requires the .NET 8 SDK:
 .\build.ps1
 ```
 
-Output: `dist\TokenWatch.exe` (single-file, self-contained).
+Output: `dist\InsightTokenWatcher.exe` (single-file, self-contained).
 Tests (provider parsers + forecast logic):
 
 ```powershell
-dotnet run --project tests\TokenWatch.CoreTests
+dotnet run --project tests\InsightTokenWatcher.CoreTests
 ```
 
 ## Security & privacy

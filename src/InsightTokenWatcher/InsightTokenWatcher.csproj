@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>InsightTokenWatcher</AssemblyName>
+    <RootNamespace>InsightTokenWatcher</RootNamespace>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.4.0</Version>
+    <AssemblyTitle>Insight Token Watcher</AssemblyTitle>
+    <Description>LLM-Kontostände und Quota-Fenster im System-Tray</Description>
+    <Company>Insight-IT</Company>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\InsightTokenWatcher.Core\InsightTokenWatcher.Core.csproj" />
+  </ItemGroup>
+
+</Project>

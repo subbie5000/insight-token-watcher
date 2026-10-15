@@ -1,4 +1,4 @@
-# TokenWatch
+# Insight Token Watcher
 
 LLM-Kontostände und Quota-Fenster im Windows-System-Tray. Mouse-over auf das Tray-Icon
 öffnet das Live-Popup: Auslastung, Verbrauchsrate, Restlaufzeit und Countdown bis zum
@@ -19,7 +19,7 @@ Reset pro Konto – so siehst du sofort, ob dein Kontingent bis zum Reset reicht
 
 ## Installation
 
-1. `TokenWatch.exe` irgendwo ablegen, z. B. `C:\Tools\TokenWatch\TokenWatch.exe`.
+1. `InsightTokenWatcher.exe` irgendwo ablegen, z. B. `C:\Tools\InsightTokenWatcher\InsightTokenWatcher.exe`.
 2. Starten – das Icon erscheint im Tray (ggf. im Überlauf-Menü „^“).
 3. Rechtsklick → **Einstellungen…** → **Neu…** pro Konto:
    - Name frei wählbar (z. B. „Anthropic Firma“, „Anthropic privat“, …)
@@ -30,7 +30,7 @@ Reset pro Konto – so siehst du sofort, ob dein Kontingent bis zum Reset reicht
 4. „Mit Windows starten“ aktiviert Autostart.
 
 Die API-Schlüssel liegen DPAPI-verschlüsselt (pro Windows-Benutzer) in
-`%APPDATA%\TokenWatch\config.json` – im Klartext sind sie nirgends.
+`%APPDATA%\InsightTokenWatcher\config.json` – im Klartext sind sie nirgends.
 
 ## Bedienung
 
@@ -70,5 +70,5 @@ Voraussetzung: .NET 8 SDK. Dann:
 .\build.ps1
 ```
 
-Ergebnis: `dist\TokenWatch.exe` (single-file, self-contained – keine Runtime nötig).
-Tests (Provider-Parser + Prognose-Logik): `dotnet run --project tests\TokenWatch.CoreTests`
+Ergebnis: `dist\InsightTokenWatcher.exe` (single-file, self-contained – keine Runtime nötig).
+Tests (Provider-Parser + Prognose-Logik): `dotnet run --project tests\InsightTokenWatcher.CoreTests`
