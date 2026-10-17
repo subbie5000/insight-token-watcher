@@ -1,3 +1,5 @@
+using InsightTokenWatcher.Core;
+
 namespace InsightTokenWatcher;
 
 internal static class Program

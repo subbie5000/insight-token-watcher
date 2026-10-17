@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.0] - 2026-10-17
+
+### Added
+- **Linux build** (Avalonia, .NET 8): tray icon (StatusNotifier/AppIndicator), the
+  same compact popup (rows, bars, forecast lines, tooltips, scrollbar, drag-to-park),
+  settings with account management and autostart, `notify-send` crit notifications,
+  live config reload, `--import`/`--render` parity. Ships as a self-contained
+  single binary, a .deb package and a tarball.
+- Config/import/key-protection moved into Core with an `IKeyProtector` abstraction:
+  DPAPI LocalMachine on Windows (unchanged, existing configs stay valid), a `v2:`-marked
+  plain store plus chmod 0600 on Linux (no DPAPI there).
+- CI now builds and tests on Windows **and** Ubuntu, including a headless popup render.
+
 ## [1.5.0] - 2026-10-15
 
 ### Added

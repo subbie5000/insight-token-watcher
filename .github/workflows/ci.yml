@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  build-test:
+  build-test-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,3 +17,17 @@ jobs:
         run: dotnet build InsightTokenWatcher.sln -c Release
       - name: Test
         run: dotnet run --project tests/InsightTokenWatcher.CoreTests -c Release --no-build
+
+  build-test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build
+        run: dotnet build InsightTokenWatcher.sln -c Release
+      - name: Test
+        run: dotnet run --project tests/InsightTokenWatcher.CoreTests -c Release --no-build
+      - name: Headless render smoke test
+        run: dotnet run --project src/InsightTokenWatcher.Linux -c Release --no-build -- --render /tmp/render && test -s /tmp/render/popup_full.png

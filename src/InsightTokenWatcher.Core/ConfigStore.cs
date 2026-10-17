@@ -1,9 +1,9 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
-using InsightTokenWatcher.Core;
 
-namespace InsightTokenWatcher;
+namespace InsightTokenWatcher.Core;
 
-internal sealed class AppSettings
+public sealed class AppSettings
 {
     public bool ShowCritBalloons { get; set; } = true;
     public bool Autostart { get; set; }
@@ -14,20 +14,18 @@ internal sealed class AppSettings
     public int? PopupY { get; set; }
 }
 
-internal sealed class ConfigFile
+public sealed class ConfigFile
 {
     public int Version { get; set; } = 1;
     public AppSettings Settings { get; set; } = new();
     public List<AccountConfig> Accounts { get; set; } = new();
 }
 
-/// <summary>Loads/saves %APPDATA%\InsightTokenWatcher\config.json; keys DPAPI-encrypted (LocalMachine).</summary>
-internal sealed class ConfigStore
+/// <summary>Loads/saves the config file; keys are protected via <see cref="KeyProtector"/>.
+/// Windows: %APPDATA%\InsightTokenWatcher\config.json (migrates the pre-1.4 TokenWatch dir).
+/// Linux: $XDG_CONFIG_HOME/insight-token-watcher/config.json, chmod 600.</summary>
+public sealed class ConfigStore
 {
-    /// <summary>Data directory; migrates %APPDATA%\TokenWatch (the pre-1.4 name) on first run.</summary>
-    public static string AppDir { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "InsightTokenWatcher");
-
     private readonly string _dir;
     private readonly string _path;
     private ConfigFile _cfg = new();
@@ -41,10 +39,31 @@ internal sealed class ConfigStore
         Load();
     }
 
-    // One-time move from the TokenWatch days: copy config + history (DPAPI keys are
-    // LocalMachine-scoped, so they stay valid at the new path).
+    /// <summary>Tests can point this at a temp dir before the first ConfigStore is created.</summary>
+    public static string? AppDirOverride { get; set; }
+
+    public static string AppDir
+    {
+        get
+        {
+            if (AppDirOverride is not null) return AppDirOverride;
+            var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            if (string.IsNullOrEmpty(baseDir)) baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
+            var name = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? "InsightTokenWatcher"
+                : "insight-token-watcher";
+            return Path.Combine(baseDir, name);
+        }
+    }
+
+    public AppSettings Settings => _cfg.Settings;
+    public IReadOnlyList<AccountConfig> Accounts => _cfg.Accounts;
+
+    // One-time move from the TokenWatch days (Windows only): copy config + history
+    // (DPAPI keys are LocalMachine-scoped, so they stay valid at the new path).
     private static void MigrateLegacyDir()
     {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
         try
         {
             var legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TokenWatch");
@@ -58,9 +77,6 @@ internal sealed class ConfigStore
             // best effort – a failed migration just starts with an empty config
         }
     }
-
-    public AppSettings Settings => _cfg.Settings;
-    public IReadOnlyList<AccountConfig> Accounts => _cfg.Accounts;
 
     /// <summary>
     /// Initial load. Only a parse error counts as corruption (backup + start empty). A
@@ -131,6 +147,11 @@ internal sealed class ConfigStore
         var json = JsonSerializer.Serialize(_cfg, JsonOptions());
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, json);
+        // keep the key file private (no-op on Windows)
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            try { File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch { /* best effort */ }
+        }
         File.Move(tmp, _path, true);
     }
 

@@ -612,6 +612,45 @@ Run("formatting: money in German style", () =>
     Check(Formatting.Money(1234.5, "CNY") == "1.234,50 ¥", Formatting.Money(1234.5, "CNY"));
 });
 
+Run("key protection: roundtrip, platform marker, garbage input", () =>
+{
+    var id = Guid.NewGuid();
+    var cipher = KeyProtector.Protect("sk-test-secret-123", id);
+    Check(KeyProtector.Unprotect(cipher, id) == "sk-test-secret-123", "roundtrip");
+    if (!OperatingSystem.IsWindows())
+        Check(cipher.StartsWith("v2:"), "linux marker, got: " + cipher[..Math.Min(10, cipher.Length)]);
+    Check(KeyProtector.Unprotect("kein-base64", id) == "", "garbage -> empty");
+});
+
+Run("config store: linux dir, save/reload, private file", () =>
+{
+    var dir = Path.Combine(Path.GetTempPath(), "itw-test-" + Guid.NewGuid().ToString("N")[..8]);
+    ConfigStore.AppDirOverride = dir;
+    try
+    {
+        var store = new ConfigStore();
+        var acc = new AccountConfig { Name = "Test", Provider = ProviderKind.DeepSeek };
+        store.UpsertAccount(acc, "sk-key-123456");
+        Check(store.Accounts.Count == 1, "saved");
+        Check(store.PlainKey(store.Accounts[0]) == "sk-key-123456", "plain key roundtrip");
+
+        var reloaded = new ConfigStore();
+        Check(reloaded.Accounts.Count == 1, "reloaded");
+        Check(reloaded.PlainKey(reloaded.Accounts[0]) == "sk-key-123456", "key survives reload");
+        if (!OperatingSystem.IsWindows())
+        {
+            var mode = File.GetUnixFileMode(Path.Combine(dir, "config.json"));
+            Check((mode & UnixFileMode.UserRead) != 0 && (mode & UnixFileMode.GroupRead) == 0,
+                "config 0600, got " + mode);
+        }
+    }
+    finally
+    {
+        ConfigStore.AppDirOverride = null;
+        Directory.Delete(dir, true);
+    }
+});
+
 Console.WriteLine();
 Console.WriteLine($"{passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;

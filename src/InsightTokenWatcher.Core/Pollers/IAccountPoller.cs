@@ -18,7 +18,7 @@ public static class ProviderInfo
         ProviderKind.DeepSeek => "DeepSeek",
         ProviderKind.OpenAi => "OpenAI",
         ProviderKind.OpenRouter => "OpenRouter",
-        ProviderKind.GenericOpenAi => "OpenAI-kompatibel (generisch)",
+        ProviderKind.GenericOpenAi => "OpenAI-kompatibel",
         _ => k.ToString()
     };
 

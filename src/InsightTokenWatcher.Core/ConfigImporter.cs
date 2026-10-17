@@ -1,7 +1,7 @@
 using System.Text.Json;
 using InsightTokenWatcher.Core;
 
-namespace InsightTokenWatcher;
+namespace InsightTokenWatcher.Core;
 
 /// <summary>Headless import: InsightTokenWatcher.exe --import accounts.json
 /// Reads a plaintext file, encrypts keys via DPAPI into config.json (one atomic write)
@@ -9,7 +9,7 @@ namespace InsightTokenWatcher;
 /// Accounts are matched by name; settings the user changed (enabled, interval) survive
 /// unless the file sets them explicitly. With "prune": true, previously imported accounts
 /// missing from the file are removed – manually added accounts are never touched.</summary>
-internal static class ConfigImporter
+public static class ConfigImporter
 {
     public const string ImportSource = "import";
 

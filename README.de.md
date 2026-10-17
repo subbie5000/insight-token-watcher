@@ -32,6 +32,34 @@ Reset pro Konto – so siehst du sofort, ob dein Kontingent bis zum Reset reicht
 Die API-Schlüssel liegen DPAPI-verschlüsselt (pro Windows-Benutzer) in
 `%APPDATA%\InsightTokenWatcher\config.json` – im Klartext sind sie nirgends.
 
+## Installation (Linux)
+
+Dieselbe App, dieselbe Mess-Engine – Avalonia-Build für Linux (Ubuntu 22.04+, GNOME/KDE/Xfce):
+
+```bash
+# entweder: .deb-Paket aus den Releases
+sudo dpkg -i insight-token-watcher_1.6.0_amd64.deb
+
+# oder: selbstständiges Einzel-Binary (keine .NET-Runtime nötig)
+tar xzf insight-token-watcher-linux-x64.tar.gz
+./insight-token-watcher
+```
+
+- Tray-Icon per StatusNotifier/AppIndicator; auf Desktops ohne Tray öffnet sich das
+  Popup beim Start, das Menü erreicht man dann über das Zahnrad im Popup.
+- Konten wie unter Windows unter **Einstellungen…** anlegen; `--import accounts.json`
+  importiert headless (gleiches Format wie Windows).
+- Autostart über „Mit Anmeldung starten“ (`~/.config/autostart/*.desktop`).
+
+Schlüssel auf Linux: Es gibt kein DPAPI. Die Keys liegen in
+`~/.config/insight-token-watcher/config.json` mit Rechten 0600 (nur der Besitzer) und
+einem `v2:`-Marker – die App synct sie nie irgendwohin. Wer es härter will, hält
+`~/.config` auf einem verschlüsselten Home.
+
+Unterschiede zu Windows: kein Hover aufs Tray (Klick schaltet das Popup um), das Popup
+verankert sich unten rechts (per Titel ziehbar, Position wird gemerkt), Warnmeldungen
+kommen über `notify-send`, sofern installiert.
+
 ## Bedienung
 
 - **Mouse-over aufs Tray-Icon** → Popup mit allen Konten.

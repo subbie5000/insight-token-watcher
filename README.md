@@ -38,6 +38,35 @@ strings are German. PRs for i18n are welcome.
 API keys are stored DPAPI-encrypted (`%APPDATA%\InsightTokenWatcher\config.json`,
 `LocalMachine` scope) — never in plaintext.
 
+## Install (Linux)
+
+Same app, same engine — Avalonia build for Linux desktops (Ubuntu 22.04+, GNOME/KDE/Xfce).
+
+```bash
+# either: .deb package from Releases
+sudo dpkg -i insight-token-watcher_1.6.0_amd64.deb
+
+# or: self-contained single binary (no .NET runtime needed)
+tar xzf insight-token-watcher-linux-x64.tar.gz
+./insight-token-watcher
+```
+
+- The app appears as a tray icon (StatusNotifier/AppIndicator; on desktops without a
+  tray host the popup opens at startup instead and you reach the menu via the popup's
+  gear icon).
+- Accounts are added in **Einstellungen…** exactly like on Windows.
+- **`--import accounts.json`** imports accounts headlessly (same format as Windows).
+- Optional autostart via **Mit Anmeldung starten** (`~/.config/autostart/*.desktop`).
+
+Key storage: there is no DPAPI on Linux. Keys are written to
+`~/.config/insight-token-watcher/config.json` with mode 0600 (owner-only) and a `v2:`
+marker so they never look like DPAPI blobs; the file is never synced by the app itself.
+For hardened keyrings you can keep the whole `~/.config` on an encrypted home.
+
+Linux differences: no hover-on-tray (click toggles the popup), the popup anchors at the
+bottom-right of the primary screen (drag it anywhere, position is remembered), and
+crit notifications use `notify-send` when available.
+
 ## Usage
 
 - **Hover the tray icon** → popup with all accounts; **left-click** pins it open.

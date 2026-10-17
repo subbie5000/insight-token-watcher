@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>insight-token-watcher</AssemblyName>
+    <RootNamespace>InsightTokenWatcher.Linux</RootNamespace>
+    <Version>1.6.0</Version>
+    <AssemblyTitle>Insight Token Watcher</AssemblyTitle>
+    <Description>LLM-Kontostände und Quota-Fenster im System-Tray (Linux)</Description>
+    <Company>Insight-IT</Company>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.5" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.5" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.5" />
+    <PackageReference Include="Avalonia.Headless" Version="11.3.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\InsightTokenWatcher.Core\InsightTokenWatcher.Core.csproj" />
+  </ItemGroup>
+
+</Project>

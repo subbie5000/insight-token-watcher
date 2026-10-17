@@ -15,6 +15,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{41DD0158
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InsightTokenWatcher.Cli", "tools\InsightTokenWatcher.Cli\InsightTokenWatcher.Cli.csproj", "{8A962ED8-4091-4D9C-BB44-3513D3453271}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InsightTokenWatcher.Linux", "src\InsightTokenWatcher.Linux\InsightTokenWatcher.Linux.csproj", "{73859087-7278-41D1-B3B9-5D9CAEEB8FCF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -36,10 +38,15 @@ Global
 		{8A962ED8-4091-4D9C-BB44-3513D3453271}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8A962ED8-4091-4D9C-BB44-3513D3453271}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8A962ED8-4091-4D9C-BB44-3513D3453271}.Release|Any CPU.Build.0 = Release|Any CPU
+		{73859087-7278-41D1-B3B9-5D9CAEEB8FCF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{73859087-7278-41D1-B3B9-5D9CAEEB8FCF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{73859087-7278-41D1-B3B9-5D9CAEEB8FCF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{73859087-7278-41D1-B3B9-5D9CAEEB8FCF}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{558D186D-A477-440F-9E81-A6F599F77D64} = {520B3DA7-6127-4494-BF31-AEEAF9951FA4}
 		{B03A75B8-0A8C-4CB0-8F55-D29D5CF40E1F} = {84288BC9-C0B1-4BB0-AC68-C66473A56DE1}
 		{8A962ED8-4091-4D9C-BB44-3513D3453271} = {41DD0158-1464-43B5-A53C-16B178C5D92A}
+		{73859087-7278-41D1-B3B9-5D9CAEEB8FCF} = {520B3DA7-6127-4494-BF31-AEEAF9951FA4}
 	EndGlobalSection
 EndGlobal
