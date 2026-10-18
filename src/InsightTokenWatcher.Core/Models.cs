@@ -11,7 +11,14 @@ public enum ProviderKind
     DeepSeek,
     OpenAi,
     OpenRouter,
-    GenericOpenAi
+    GenericOpenAi,
+    Groq,
+    Mistral,
+    Xai,
+    Cerebras,
+    Together,
+    Gemini,
+    Perplexity
 }
 
 public enum AuthKind

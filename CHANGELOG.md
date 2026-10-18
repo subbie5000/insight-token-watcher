@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.7.0] - 2026-10-18
+
+### Added
+- Seven new providers: Groq, Mistral, xAI Grok and Cerebras (header-based, share the
+  generic parser), plus Together AI, Google Gemini and Perplexity. Those three expose
+  **no quota API at all** — they run as info-only accounts (reachability ping, default
+  poll 1 h, explanatory note instead of invented numbers).
+- The provider catalog moved to a data file (`providers.json`, embedded in Core) that
+  the Windows/Linux dialogs and the upcoming iOS port all read; a test pins it against
+  the runtime definitions so they cannot drift.
+
 ## [1.6.0] - 2026-10-17
 
 ### Added

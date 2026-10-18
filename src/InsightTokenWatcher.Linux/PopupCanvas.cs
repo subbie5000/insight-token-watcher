@@ -96,8 +96,12 @@ internal sealed class PopupCanvas : Control
             foreach (var line in WarnLines(v, state))
                 notes.Add((line.text, line.crit ? Ui.CritBrush : Ui.WarnBrush));
             if (v.Display is { } d)
+            {
                 foreach (var w in d.Windows.Where(w => w.IsBalance && !string.IsNullOrEmpty(w.Note)))
                     notes.Add((w.Note!, Ui.FaintBrush));
+                foreach (var w in d.Windows.Where(w => w.IsInfoOnly && !string.IsNullOrEmpty(w.Note)))
+                    notes.Add((w.Note!, Ui.FaintBrush));
+            }
             if (error is not null)
                 notes.Add((error, Ui.CritBrush));
             var h = RowBase + notes.Count * LineH;

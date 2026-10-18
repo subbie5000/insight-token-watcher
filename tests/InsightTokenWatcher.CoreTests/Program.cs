@@ -651,6 +651,106 @@ Run("config store: linux dir, save/reload, private file", () =>
     }
 });
 
+Run("provider catalog: matches ProviderInfo, complete and typed", () =>
+{
+    Check(ProvidersCatalog.All.Count == Enum.GetValues<ProviderKind>().Length,
+        $"catalog count {ProvidersCatalog.All.Count} vs enum");
+    foreach (ProviderKind k in Enum.GetValues<ProviderKind>())
+    {
+        var e = ProvidersCatalog.For(k);
+        Check(e.Key == Enum.GetName(k)!, "key order/name " + e.Key);
+        Check(e.DisplayName == ProviderInfo.DisplayName(k), "displayName drift " + e.Key);
+        Check(e.DefaultBaseUrl == ProviderInfo.DefaultBaseUrl(k), "baseUrl drift " + e.Key);
+        Check(e.DefaultPollSeconds == ProviderInfo.DefaultPollSeconds(k), "poll drift " + e.Key);
+        if (ProviderInfo.IsInfoOnly(k)) Check(e.Kind == "infoOnly", "infoOnly marker " + e.Key);
+    }
+    var generic = ProvidersCatalog.For(ProviderKind.GenericOpenAi);
+    Check(generic.DefaultBaseUrl == "" && generic.BaseUrlHint.Contains("/v1"), "generic needs manual base url");
+});
+
+Run("poller factory: header providers share the generic parser, infoOnly gets the pinger", () =>
+{
+    Check(ProviderInfo.Poller(ProviderKind.Groq) is GenericOpenAiPoller, "groq");
+    Check(ProviderInfo.Poller(ProviderKind.Mistral) is GenericOpenAiPoller, "mistral");
+    Check(ProviderInfo.Poller(ProviderKind.Xai) is GenericOpenAiPoller, "xai");
+    Check(ProviderInfo.Poller(ProviderKind.Cerebras) is GenericOpenAiPoller, "cerebras");
+    Check(ProviderInfo.Poller(ProviderKind.Together) is InfoOnlyPoller, "together");
+    Check(ProviderInfo.Poller(ProviderKind.Gemini) is InfoOnlyPoller, "gemini");
+    Check(ProviderInfo.Poller(ProviderKind.Perplexity) is InfoOnlyPoller, "perplexity");
+});
+
+Run("generic parser: mistral/xAI style headers produce token+request windows", () =>
+{
+    var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["x-ratelimit-limit-tokens"] = "32000",
+        ["x-ratelimit-remaining-tokens"] = "29000",
+        ["x-ratelimit-reset-tokens"] = "2m30s",
+        ["x-ratelimit-limit-requests"] = "30",
+        ["x-ratelimit-remaining-requests"] = "29",
+        ["x-ratelimit-reset-requests"] = "1m"
+    };
+    var snap = GenericOpenAiPoller.ParseHeaders(Guid.NewGuid(), headers, 200, "{}");
+    Check(snap.Ok && snap.Windows.Count == 2, "windows " + snap.Windows.Count);
+    var tok = snap.Windows.First(w => w.Key == "tokens");
+    Check(Math.Abs((tok.UsedFraction ?? -1) - (1 - 29000.0 / 32000)) < 0.001, "fraction");
+    Check(tok.ResetAtUtc is not null, "reset parsed");
+});
+
+Run("infoOnly poller: gemini 200 -> ok note, 401 -> failure, request carries key header", () =>
+{
+    string? seenKey = null; string? seenUrl = null; int status = 200;
+    var http = new HttpClient(new FakeHandler((req, _) =>
+    {
+        seenUrl = req.RequestUri?.ToString();
+        seenKey = req.Headers.TryGetValues("x-goog-api-key", out var v) ? v.First() : null;
+        return new HttpResponseMessage((System.Net.HttpStatusCode)status)
+        {
+            Content = new StringContent("{\"models\":[]}")
+        };
+    }));
+    var cfg = new AccountConfig { Name = "G", Provider = ProviderKind.Gemini };
+    var snap = ProviderInfo.Poller(ProviderKind.Gemini).PollAsync(cfg, "g-key", http, default).GetAwaiter().GetResult();
+    Check(snap.Ok, "gemini ok");
+    Check(seenUrl!.EndsWith("/v1/models"), "models url " + seenUrl);
+    Check(seenKey == "g-key", "key header");
+    Check(snap.Windows.Single().IsInfoOnly && snap.Windows.Single().Note!.Contains("nicht abfragbar"), "info note");
+
+    status = 401;
+    var fail = ProviderInfo.Poller(ProviderKind.Gemini).PollAsync(cfg, "bad", http, default).GetAwaiter().GetResult();
+    Check(!fail.Ok && fail.Error!.Contains("401"), "401 -> failure");
+});
+
+Run("infoOnly poller: perplexity ping shape and together bearer", () =>
+{
+    string? body = null; string? auth = null; string? url = null;
+    var http = new HttpClient(new FakeHandler((req, _) =>
+    {
+        url = req.RequestUri?.ToString();
+        auth = req.Headers.Authorization?.Scheme;
+        if (req.Content is not null)
+            body = req.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent("{}") };
+    }));
+    var cfg = new AccountConfig { Name = "P", Provider = ProviderKind.Perplexity };
+    ProviderInfo.Poller(ProviderKind.Perplexity).PollAsync(cfg, "p-key", http, default).GetAwaiter().GetResult();
+    Check(url == "https://api.perplexity.ai/chat/completions", "perplexity url " + url);
+    Check(auth == "Bearer", "bearer");
+    Check(body!.Contains("\"model\":\"sonar\"") && body.Contains("\"max_tokens\":1"), "ping shape " + body);
+
+    var t = new AccountConfig { Name = "T", Provider = ProviderKind.Together };
+    ProviderInfo.Poller(ProviderKind.Together).PollAsync(t, "t-key", http, default).GetAwaiter().GetResult();
+    Check(url!.EndsWith("/v1/models"), "together url " + url);
+});
+
 Console.WriteLine();
 Console.WriteLine($"{passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
+sealed class FakeHandler : HttpClientHandler
+{
+    private readonly Func<HttpRequestMessage, CancellationToken, HttpResponseMessage> _responder;
+    public FakeHandler(Func<HttpRequestMessage, CancellationToken, HttpResponseMessage> responder) => _responder = responder;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+        Task.FromResult(_responder(request, ct));
+}
+

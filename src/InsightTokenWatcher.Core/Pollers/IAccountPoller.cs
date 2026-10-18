@@ -19,6 +19,13 @@ public static class ProviderInfo
         ProviderKind.OpenAi => "OpenAI",
         ProviderKind.OpenRouter => "OpenRouter",
         ProviderKind.GenericOpenAi => "OpenAI-kompatibel",
+        ProviderKind.Groq => "Groq",
+        ProviderKind.Mistral => "Mistral",
+        ProviderKind.Xai => "xAI Grok",
+        ProviderKind.Cerebras => "Cerebras",
+        ProviderKind.Together => "Together AI",
+        ProviderKind.Gemini => "Google Gemini",
+        ProviderKind.Perplexity => "Perplexity",
         _ => k.ToString()
     };
 
@@ -31,7 +38,13 @@ public static class ProviderInfo
         ProviderKind.DeepSeek => "https://api.deepseek.com",
         ProviderKind.OpenAi => "https://api.openai.com",
         ProviderKind.OpenRouter => "https://openrouter.ai",
-        ProviderKind.GenericOpenAi => "",
+        ProviderKind.Groq => "https://api.groq.com/openai/v1",
+        ProviderKind.Mistral => "https://api.mistral.ai/v1",
+        ProviderKind.Xai => "https://api.x.ai/v1",
+        ProviderKind.Cerebras => "https://api.cerebras.ai/v1",
+        ProviderKind.Together => "https://api.together.xyz/v1",
+        ProviderKind.Gemini => "https://generativelanguage.googleapis.com",
+        ProviderKind.Perplexity => "https://api.perplexity.ai",
         _ => ""
     };
 
@@ -45,6 +58,13 @@ public static class ProviderInfo
         ProviderKind.OpenAi => "Standard: https://api.openai.com · Org-Admin-Key (sk-admin-…) empfohlen",
         ProviderKind.OpenRouter => "Standard: https://openrouter.ai",
         ProviderKind.GenericOpenAi => "Basis-URL mit /v1, z.B. https://api.groq.com/openai/v1 · Modell (Ping) setzen!",
+        ProviderKind.Groq => "Standard: https://api.groq.com/openai/v1 · Modell (Ping) setzen!",
+        ProviderKind.Mistral => "Standard: https://api.mistral.ai/v1 · Modell (Ping) setzen!",
+        ProviderKind.Xai => "Standard: https://api.x.ai/v1 · Modell (Ping) setzen!",
+        ProviderKind.Cerebras => "Standard: https://api.cerebras.ai/v1 · Modell (Ping) setzen!",
+        ProviderKind.Together => "Standard: https://api.together.xyz/v1",
+        ProviderKind.Gemini => "Standard: https://generativelanguage.googleapis.com",
+        ProviderKind.Perplexity => "Standard: https://api.perplexity.ai",
         _ => ""
     };
 
@@ -52,6 +72,12 @@ public static class ProviderInfo
         string.IsNullOrWhiteSpace(cfg.BaseUrlOverride)
             ? DefaultBaseUrl(cfg.Provider)
             : cfg.BaseUrlOverride!.Trim().TrimEnd('/');
+
+    public static bool IsInfoOnly(ProviderKind k) =>
+        k is ProviderKind.Together or ProviderKind.Gemini or ProviderKind.Perplexity;
+
+    /// <summary>Default poll interval for NEW accounts (seconds); InfoOnly providers ping rarely.</summary>
+    public static int DefaultPollSeconds(ProviderKind k) => IsInfoOnly(k) ? 3600 : 60;
 
     public static IAccountPoller Poller(ProviderKind k) => k switch
     {
@@ -62,7 +88,9 @@ public static class ProviderInfo
         ProviderKind.DeepSeek => new DeepSeekPoller(),
         ProviderKind.OpenAi => new OpenAiPoller(),
         ProviderKind.OpenRouter => new OpenRouterPoller(),
-        ProviderKind.GenericOpenAi => new GenericOpenAiPoller(),
+        ProviderKind.Groq or ProviderKind.Mistral or ProviderKind.Xai or ProviderKind.Cerebras
+            or ProviderKind.GenericOpenAi => new GenericOpenAiPoller(),
+        ProviderKind.Together or ProviderKind.Gemini or ProviderKind.Perplexity => new InfoOnlyPoller(),
         _ => throw new ArgumentOutOfRangeException(nameof(k))
     };
 

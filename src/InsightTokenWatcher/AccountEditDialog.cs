@@ -186,13 +186,15 @@ internal sealed class AccountEditDialog : Form
     {
         var kind = (ProviderKind)_provider.SelectedIndex;
         var anthropic = kind == ProviderKind.Anthropic;
-        var needsModel = anthropic || kind == ProviderKind.GenericOpenAi;
+        var needsModel = anthropic || kind is ProviderKind.GenericOpenAi or ProviderKind.Groq
+            or ProviderKind.Mistral or ProviderKind.Xai or ProviderKind.Cerebras;
         _auth.Visible = anthropic;
         _authLabel.Visible = anthropic;
         _model.Visible = needsModel;
         _modelLabel.Visible = needsModel;
         _modelLabel.Text = anthropic ? "Modell (Ping):" : "Modell (Ping) *:";
         _urlHint.Text = ProviderInfo.BaseUrlHint(kind);
+        if (_isNew) _interval.Value = ProviderInfo.DefaultPollSeconds(kind); // infoOnly pings rarely
     }
 
     private async Task TestAsync()
