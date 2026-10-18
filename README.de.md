@@ -45,6 +45,13 @@ tar xzf insight-token-watcher-linux-x64.tar.gz
 ./insight-token-watcher
 ```
 
+**Fedora / Nobara / RHEL** (rpm-basiert):
+
+```bash
+sudo dnf install ./insight-token-watcher-1.6.0-1.x86_64.rpm
+# oder distro-unabhängig: das tar.gz-Binary von oben läuft überall
+```
+
 - Tray-Icon per StatusNotifier/AppIndicator; auf Desktops ohne Tray öffnet sich das
   Popup beim Start, das Menü erreicht man dann über das Zahnrad im Popup.
 - Konten wie unter Windows unter **Einstellungen…** anlegen; `--import accounts.json`

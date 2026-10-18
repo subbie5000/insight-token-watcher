@@ -51,6 +51,13 @@ tar xzf insight-token-watcher-linux-x64.tar.gz
 ./insight-token-watcher
 ```
 
+**Fedora / Nobara / RHEL** (rpm-based):
+
+```bash
+sudo dnf install ./insight-token-watcher-1.6.0-1.x86_64.rpm
+# or distro-independent: the tarball binary above works everywhere
+```
+
 - The app appears as a tray icon (StatusNotifier/AppIndicator; on desktops without a
   tray host the popup opens at startup instead and you reach the menu via the popup's
   gear icon).
