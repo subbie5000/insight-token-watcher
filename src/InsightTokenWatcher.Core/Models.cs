@@ -53,6 +53,9 @@ public sealed class AccountConfig
     /// <summary>Stable id from the import source (e.g. a credential label); survives renames.</summary>
     public string? ExternalId { get; set; }
 
+    /// <summary>Shallow copy for edit dialogs: only persisted changes reach the stored object.</summary>
+    public AccountConfig Clone() => (AccountConfig)MemberwiseClone();
+
     [JsonIgnore]
     public string EffectiveModel =>
         !string.IsNullOrWhiteSpace(Model) ? Model.Trim() : "claude-haiku-4-5-20251001";

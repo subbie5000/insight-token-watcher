@@ -181,7 +181,11 @@ internal sealed class SettingsForm : Form
         var acc = new AccountConfig { Name = "Neues Konto", Provider = ProviderKind.Anthropic };
         using var dlg = new AccountEditDialog(_ctx, acc, isNew: true);
         if (dlg.ShowDialog(this) == DialogResult.OK && TrySave(() => _ctx.Store.UpsertAccount(acc, dlg.PlainKeyIfChanged)))
+        {
             ApplyAndRefresh();
+            _status.ForeColor = Theme.Muted;
+            _status.Text = $"Gespeichert: {acc.Name}";
+        }
     }
 
     private void EditSelected()
@@ -192,9 +196,16 @@ internal sealed class SettingsForm : Form
             _status.Text = "Bitte zuerst ein Konto markieren.";
             return;
         }
-        using var dlg = new AccountEditDialog(_ctx, acc, isNew: false);
-        if (dlg.ShowDialog(this) == DialogResult.OK && TrySave(() => _ctx.Store.UpsertAccount(acc, dlg.PlainKeyIfChanged)))
+        // work on a copy: only a successful save may change the stored object – otherwise a
+        // failed save would leave the in-memory entry diverging from the file ("springt zurück")
+        var draft = acc.Clone();
+        using var dlg = new AccountEditDialog(_ctx, draft, isNew: false);
+        if (dlg.ShowDialog(this) == DialogResult.OK && TrySave(() => _ctx.Store.UpsertAccount(draft, dlg.PlainKeyIfChanged)))
+        {
             ApplyAndRefresh();
+            _status.ForeColor = Theme.Muted;
+            _status.Text = $"Gespeichert: {draft.Name} ({(draft.Enabled ? "aktiv" : "deaktiviert")})";
+        }
     }
 
     private void RemoveSelected()

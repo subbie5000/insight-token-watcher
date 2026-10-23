@@ -152,7 +152,22 @@ public sealed class ConfigStore
         {
             try { File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch { /* best effort */ }
         }
-        File.Move(tmp, _path, true);
+        // a concurrent import replaces the file at the same moment: retry briefly, then report
+        IOException? last = null;
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                File.Move(tmp, _path, true);
+                return;
+            }
+            catch (IOException ex)
+            {
+                last = ex;
+                Thread.Sleep(200 * (attempt + 1));
+            }
+        }
+        throw last!;
     }
 
     public void UpsertAccount(AccountConfig acc, string? newPlainKey, bool save = true)

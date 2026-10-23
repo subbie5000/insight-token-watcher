@@ -19,6 +19,12 @@ internal static class Program
         if (args.Length >= 2 && args[0].Equals("--import", StringComparison.OrdinalIgnoreCase))
             return ConfigImporter.Run(args[1]);
 
+        // Self-test for the edit-dialog save chain (report: deaktivieren springt zurück).
+        // InsightTokenWatcher.exe --test-toggle <accountName> — runs the EXACT SettingsForm path:
+        // build dialog, toggle the "Aktiviert" checkbox, invoke OnSave, persist, re-read.
+        if (args.Length >= 2 && args[0].Equals("--test-toggle", StringComparison.OrdinalIgnoreCase))
+            return UiSaveRepro.Run(args[1], args.ElementAtOrDefault(2));
+
         // Offscreen rendering of the popup with demo data (visual checks).
         // InsightTokenWatcher.exe --render <outDir> [--scale 1.5]
         if (args.Length >= 1 && args[0].Equals("--render", StringComparison.OrdinalIgnoreCase))
