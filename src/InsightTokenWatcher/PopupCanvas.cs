@@ -461,7 +461,9 @@ internal sealed class PopupCanvas : Control
         var bgRect = new RectangleF(S(6), y + S(2), w - S(12), row.H - S(4));
         var tint = row.State switch
         {
-            RowState.Crit or RowState.Error => Color.FromArgb(20, Theme.Crit),
+            // 28.10.2026 (Dominic): critical/error rows tint amber instead of red – red stays
+            // for text and bars only; row text stays white
+            RowState.Crit or RowState.Error => Color.FromArgb(20, Theme.Warn),
             RowState.Warn => Color.FromArgb(16, Theme.Warn),
             _ => Color.Empty
         };
