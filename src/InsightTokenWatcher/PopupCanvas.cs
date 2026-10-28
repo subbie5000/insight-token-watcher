@@ -547,9 +547,11 @@ internal sealed class PopupCanvas : Control
             return;
         }
         row.View.Evals.TryGetValue(win.Key, out var ev);
-        var health = ev?.Health ?? Health.Unknown;
-        var color = row.Stale ? Theme.Stale : Theme.ForHealth(health);
-        var valueColor = row.Stale ? Theme.Stale : health is Health.Warn or Health.Crit ? color : Theme.Text;
+        // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
+        // lime = unused (0 %) – forecast health no longer drives the bar colour
+        var frac0 = win.UsedFraction ?? 0;
+        var color = row.Stale ? Theme.Stale : frac0 >= 0.999 ? Theme.Crit : frac0 > 0 ? Theme.Warn : Theme.Ok;
+        var valueColor = row.Stale ? Theme.Stale : color == Theme.Ok ? Theme.Text : color;
 
         var value = Formatting.Percent(win.UsedFraction);
         var vw = Gfx.Measure(g, value, Theme.FValue);
@@ -651,7 +653,10 @@ internal sealed class PopupCanvas : Control
         else
         {
             row.View.Evals.TryGetValue(win.Key, out var ev);
-            var color = row.Stale ? Theme.Stale : Theme.ForHealth(ev?.Health ?? Health.Unknown);
+            // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
+            // lime = unused (0 %) – forecast health no longer drives the bar colour
+            var frac = win.UsedFraction ?? 0;
+            var color = row.Stale ? Theme.Stale : frac >= 0.999 ? Theme.Crit : frac > 0 ? Theme.Warn : Theme.Ok;
             Gfx.Bar(g, new RectangleF(x, y + S(8), S(70), S(4)), win.UsedFraction ?? 0, color, Theme.Track);
             var text = Formatting.Percent(win.UsedFraction);
             if (win.Remaining is not null && win.Total is not null)

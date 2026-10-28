@@ -413,12 +413,9 @@ internal sealed class PopupCanvas : Control
         }
         v.Evals.TryGetValue(win.Key, out var evq);
         var frac = win.UsedFraction ?? 0;
-        var color = frac >= 0.999 ? Ui.Crit : evq?.Health switch
-        {
-            Health.Crit => Ui.Crit,
-            Health.Warn => Ui.Warn,
-            _ => Ui.Ok
-        };
+        // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
+        // lime = unused (0 %) – forecast health no longer drives the bar colour
+        var color = frac >= 0.999 ? Ui.Crit : frac > 0 ? Ui.Warn : Ui.Ok;
         var hasTotal = win.Total is { } t && t > 0;
         var totalV = win.Total ?? 0;
         var remV = Math.Max(0, totalV - frac * totalV);
