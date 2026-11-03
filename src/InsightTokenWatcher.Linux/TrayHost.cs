@@ -36,8 +36,8 @@ internal sealed class TrayHost : IDisposable
         _tray.IsVisible = true;
     }
 
-    public void UpdateIcon(int crit, int errors, int warn, bool anyData) =>
-        _tray.Icon = IconFactory.TrayIcon(crit, errors, warn, anyData);
+    public void UpdateIcon(int crit, int errors, int warn, bool anyData, double? weekFraction = null) =>
+        _tray.Icon = IconFactory.TrayIcon(crit, errors, warn, anyData, weekFraction: weekFraction);
 
     public void Dispose()
     {

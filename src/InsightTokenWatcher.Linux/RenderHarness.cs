@@ -54,14 +54,16 @@ internal static class RenderHarness
         using (var c = new SKCanvas(sheet))
         {
             c.Clear(new SKColor(24, 26, 32));
-            var states = new (int crit, int errors, int warn, bool data)[]
+            var states = new (int crit, int errors, int warn, bool data, double? week)[]
             {
-                (0, 0, 0, true), (1, 0, 0, true), (3, 0, 2, true), (0, 0, 2, true), (12, 0, 0, true), (0, 0, 0, false)
+                (0, 0, 0, true, 0.0), (0, 0, 0, true, 0.35), (0, 0, 0, true, 0.62),
+                (1, 0, 0, true, 0.78), (0, 0, 0, true, 1.0), (0, 0, 2, true, 0.12),
+                (0, 0, 0, false, null)
             };
             for (var i = 0; i < states.Length; i++)
             {
-                var (crit, errors, warn, data) = states[i];
-                using var bmp = IconFactory.BadgePng(crit, errors, warn, data, 64);
+                var (crit, errors, warn, data, week) = states[i];
+                using var bmp = IconFactory.BadgePng(crit, errors, warn, data, 64, week);
                 using var img = SKImage.FromBitmap(bmp);
                 c.DrawImage(img, new SKRect(64 * (i / 5), 64 * (i % 5), 64 * (i / 5) + 64, 64 * (i % 5) + 64));
             }

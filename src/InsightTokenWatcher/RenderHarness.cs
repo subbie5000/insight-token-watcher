@@ -62,9 +62,10 @@ internal static class RenderHarness
 
     private static void SaveIcons(string path)
     {
-        var states = new List<(int crit, int warn, bool data)>
+        var states = new List<(int crit, int warn, bool data, double? week)>
         {
-            (0, 0, true), (1, 0, true), (3, 2, true), (0, 2, true), (12, 0, true), (0, 0, false)
+            (0, 0, true, 0.0), (0, 0, true, 0.35), (0, 0, true, 0.62), (1, 0, true, 0.78),
+            (0, 0, true, 1.0), (0, 2, true, 0.12), (0, 0, false, null)
         };
         int[] sizes = { 16, 20, 24, 32 };
         const int zoom = 6;
@@ -77,7 +78,7 @@ internal static class RenderHarness
         for (var r = 0; r < states.Count; r++)
             for (var c = 0; c < sizes.Length; c++)
             {
-                using var icon = IconFactory.Render(states[r].crit, states[r].warn, states[r].data, sizes[c]);
+                using var icon = IconFactory.Render(states[r].crit, states[r].warn, states[r].data, sizes[c], states[r].week);
                 var px = sizes[c] * zoom;
                 g.DrawImage(icon, new Rectangle(c * cell + 8, r * cell + 8, px, px));
             }

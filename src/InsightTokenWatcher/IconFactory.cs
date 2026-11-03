@@ -18,7 +18,7 @@ internal static class IconFactory
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyIcon(IntPtr hIcon);
 
-    public static Bitmap Render(int crit, int warn, bool anyData, int size)
+    public static Bitmap Render(int crit, int warn, bool anyData, int size, double? weekFraction = null)
     {
         var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
@@ -26,49 +26,67 @@ internal static class IconFactory
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         g.Clear(Color.Transparent);
 
-        if (crit > 0 || warn > 0)
+        if (!anyData)
         {
-            var color = crit > 0 ? Theme.Crit : Theme.Warn;
-            var count = crit > 0 ? crit : warn;
-            var disc = new RectangleF(0.5f, 0.5f, size - 1f, size - 1f);
-            using (var b = new SolidBrush(color))
-                g.FillEllipse(b, disc);
-            var text = count > 9 ? "!" : count.ToString();
-            var fontPx = size * 0.80f;
-            using var font = new Font("Segoe UI", fontPx, FontStyle.Bold, GraphicsUnit.Pixel);
-            using var fg = new SolidBrush(crit > 0 ? Color.White : Color.FromArgb(28, 22, 6));
-            using var fmt = new StringFormat
-            {
-                Alignment = StringAlignment.Center,
-                LineAlignment = StringAlignment.Center,
-                FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip
-            };
-            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-            // Segoe UI sits slightly high in its line box; nudge down for optical centering
-            g.DrawString(text, font, fg, new RectangleF(0, size * 0.06f, size, size), fmt);
+            var stroke0 = Math.Max(2f, size * 0.19f);
+            var inset0 = stroke0 / 2f + 0.5f;
+            var ring0 = new RectangleF(inset0, inset0, size - 2 * inset0, size - 2 * inset0);
+            using (var bg = new SolidBrush(Color.FromArgb(235, 20, 22, 27)))
+                g.FillEllipse(bg, RectangleF.Inflate(ring0, stroke0 / 2f, stroke0 / 2f));
+            using var pen0 = new Pen(Color.FromArgb(140, 146, 158), stroke0);
+            g.DrawEllipse(pen0, ring0);
             return bmp;
         }
 
-        var stroke = Math.Max(2f, size * 0.19f);
+        // ring gauge with the weekly usage in the middle (Hermes iOS quota-ring look)
+        var frac = Math.Clamp(weekFraction ?? 0, 0, 1);
+        var blocked = frac >= 0.999;
+        var stroke = Math.Max(2f, size * 0.15f);
         var inset = stroke / 2f + 0.5f;
         var ring = new RectangleF(inset, inset, size - 2 * inset, size - 2 * inset);
         using (var bg = new SolidBrush(Color.FromArgb(235, 20, 22, 27)))
             g.FillEllipse(bg, RectangleF.Inflate(ring, stroke / 2f, stroke / 2f));
         using (var track = new Pen(Color.FromArgb(70, 76, 88), stroke))
             g.DrawEllipse(track, ring);
-        using var arc = new Pen(anyData ? Theme.Ok : Color.FromArgb(140, 146, 158), stroke)
+        if (frac > 0.004) // no arc at 0 % – a round cap alone reads as "a bit used"
         {
-            StartCap = LineCap.Round,
-            EndCap = LineCap.Round
+            using var arc = new Pen(blocked ? Theme.Crit : Theme.Ok, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawArc(arc, ring, -90, (float)(frac * 360));
+        }
+
+        var pct = (int)Math.Round(frac * 100);
+        var text = pct.ToString();
+        var fontPx = size * (text.Length >= 3 ? 0.34f : text.Length == 2 ? (size < 20 ? 0.40f : 0.44f) : 0.52f);
+        using var font = new Font("Segoe UI", fontPx, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var fg = new SolidBrush(Color.White); // red on dark is illegible; the ring carries the state
+        using var fmt = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+            FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip
         };
-        g.DrawArc(arc, ring, -90, anyData ? 250 : 90);
+        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+        g.DrawString(text, font, fg, new RectangleF(0, size * 0.05f, size, size), fmt);
+
+        // small corner dot for other problems, bottom-right (the arc starts at 12 o'clock –
+        // a top-right dot would cover small fills)
+        if (crit > 0 || warn > 0)
+        {
+            var dotColor = crit > 0 ? Theme.Crit : Theme.Warn;
+            var d = Math.Max(6f, size * 0.40f);
+            using var dot = new SolidBrush(dotColor);
+            using var edge = new Pen(Color.FromArgb(255, 20, 22, 27), Math.Max(1f, size * 0.06f));
+            var r = new RectangleF(size - d, size - d - 0.5f, d, d);
+            g.FillEllipse(dot, r);
+            g.DrawEllipse(edge, r);
+        }
         return bmp;
     }
 
     /// <summary>Creates an icon; call <see cref="Destroy"/> on the handle once it has been replaced.</summary>
-    public static Icon Create(int crit, int warn, bool anyData, int size, out IntPtr handle)
+    public static Icon Create(int crit, int warn, bool anyData, int size, double? weekFraction, out IntPtr handle)
     {
-        using var bmp = Render(crit, warn, anyData, size);
+        using var bmp = Render(crit, warn, anyData, size, weekFraction);
         handle = bmp.GetHicon();
         return Icon.FromHandle(handle);
     }

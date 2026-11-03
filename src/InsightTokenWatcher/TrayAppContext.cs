@@ -216,17 +216,26 @@ internal sealed class TrayAppContext : ApplicationContext
         var views = _engine.GetView();
         int crit = 0, warn = 0;
         var anyData = false;
+        var weekFractions = new List<double>();
         foreach (var v in views)
         {
             if (v.Display is not null) anyData = true;
             if (v.Health == Health.Crit) crit++;
             else if (v.Health == Health.Warn && !v.IsStale) warn++;
+
+            // Dominic, 28.10.2026: the tray icon shows the mean of all Anthropic week
+            // windows ("wie viel von meinen Opus-Abos ist runter")
+            if (v.Config.Provider == ProviderKind.Anthropic && v.Display is { } snap)
+                foreach (var w in snap.Windows.Where(w => (w.WindowMinutes ?? 0) >= 1440 && w.UsedFraction is not null))
+                    weekFractions.Add(w.UsedFraction!.Value);
         }
+        var week = weekFractions.Count > 0 ? weekFractions.Average() : (double?)null;
         var size = Math.Max(16, SystemInformation.SmallIconSize.Width);
-        var key = $"{crit}|{warn}|{anyData}|{size}";
+        var pct = week is null ? -1 : (int)Math.Round(week.Value * 100);
+        var key = $"{crit}|{warn}|{anyData}|{size}|{pct}";
         if (key == _iconKey) return;
 
-        var icon = IconFactory.Create(crit, warn, anyData, size, out var handle);
+        var icon = IconFactory.Create(crit, warn, anyData, size, week, out var handle);
         _tray.Icon = icon;
         IconFactory.Destroy(_iconHandle); // the shell keeps its own copy
         _iconHandle = handle;

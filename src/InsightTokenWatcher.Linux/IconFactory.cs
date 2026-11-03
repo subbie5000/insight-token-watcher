@@ -12,21 +12,19 @@ internal static class IconFactory
     public static WindowIcon WindowIcon(int size = 128) =>
         new(ToStream(draw: canvas => DrawBadge(canvas, size, Kind.Ring, 0)));
 
-    public static WindowIcon TrayIcon(int crit, int errors, int warn, bool anyData, int size = 32)
+    public static WindowIcon TrayIcon(int crit, int errors, int warn, bool anyData, int size = 32,
+        double? weekFraction = null)
     {
-        var kind = crit + errors > 0 ? Kind.Crit : warn > 0 ? Kind.Warn : anyData ? Kind.Ring : Kind.None;
-        var count = crit + errors > 0 ? crit + errors : warn;
-        return new WindowIcon(ToStream(draw: canvas => DrawBadge(canvas, size, kind, count)));
+        return new WindowIcon(ToStream(draw: canvas => DrawGauge(canvas, size, crit + errors, warn, anyData, weekFraction)));
     }
 
     /// <summary>Raster badge for the render harness / docs.</summary>
-    internal static SKBitmap BadgePng(int crit, int errors, int warn, bool anyData, int size)
+    internal static SKBitmap BadgePng(int crit, int errors, int warn, bool anyData, int size,
+        double? weekFraction = null)
     {
-        var kind = crit + errors > 0 ? Kind.Crit : warn > 0 ? Kind.Warn : anyData ? Kind.Ring : Kind.None;
-        var count = crit + errors > 0 ? crit + errors : warn;
         var bmp = new SKBitmap(size, size);
         using var c = new SKCanvas(bmp);
-        DrawBadge(c, size, kind, count);
+        DrawGauge(c, size, crit + errors, warn, anyData, weekFraction);
         return bmp;
     }
 
@@ -43,6 +41,57 @@ internal static class IconFactory
         data.SaveTo(ms);
         ms.Position = 0;
         return ms;
+    }
+
+
+    /// <summary>Tray gauge (parity with the Windows IconFactory): weekly-usage ring with the
+    /// percent in the middle; corner dot (bottom-right) for problems; grey ring without data.</summary>
+    private static void DrawGauge(SKCanvas c, int size, int crit, int warn, bool anyData, double? weekFraction)
+    {
+        var s = (float)size;
+        if (!anyData)
+        {
+            using var ring = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = s * 0.15f, Color = new SKColor(140, 146, 158) };
+            c.DrawCircle(s / 2f, s / 2f, s * 0.42f, ring);
+            return;
+        }
+
+        var frac = Math.Clamp(weekFraction ?? 0, 0, 1);
+        var blocked = frac >= 0.999;
+        var trackC = new SKColor(70, 76, 88);
+        var arcC = blocked ? new SKColor(240, 82, 82) : new SKColor(168, 225, 12);
+
+        using (var bg = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill, Color = new SKColor(20, 22, 27, 235) })
+            c.DrawCircle(s / 2f, s / 2f, s * 0.5f, bg);
+        using (var track = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = s * 0.15f, Color = trackC })
+            c.DrawCircle(s / 2f, s / 2f, s * 0.42f, track);
+        if (frac > 0.004)
+        {
+            using var arc = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = s * 0.15f, Color = arcC, StrokeCap = SKStrokeCap.Round };
+            using var path = new SKPath();
+            var r = new SKRect(s * 0.08f, s * 0.08f, s * 0.92f, s * 0.92f);
+            path.AddArc(r, -90, (float)(frac * 360));
+            c.DrawPath(path, arc);
+        }
+
+        var pct = ((int)Math.Round(frac * 100)).ToString();
+        var fontPx = s * (pct.Length >= 3 ? 0.34f : pct.Length == 2 ? (size < 20 ? 0.40f : 0.44f) : 0.52f);
+        using (var text = new SKPaint
+        {
+            IsAntialias = true, TextAlign = SKTextAlign.Center, Typeface = SKTypeface.FromFamilyName("DejaVu Sans", SKFontStyle.Bold),
+            TextSize = fontPx, Color = SKColors.White
+        })
+            c.DrawText(pct, s / 2f, s * 0.5f + fontPx * 0.35f, text);
+
+        if (crit > 0 || warn > 0)
+        {
+            var dotC = crit > 0 ? new SKColor(240, 82, 82) : new SKColor(245, 181, 46);
+            var d = Math.Max(6f, s * 0.40f);
+            using var dot = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill, Color = dotC };
+            using var edge = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(1f, s * 0.06f), Color = new SKColor(20, 22, 27) };
+            c.DrawCircle(s - d / 2f, s - d / 2f, d / 2f, dot);
+            c.DrawCircle(s - d / 2f, s - d / 2f, d / 2f, edge);
+        }
     }
 
     private static void DrawBadge(SKCanvas c, int size, Kind kind, int count)
