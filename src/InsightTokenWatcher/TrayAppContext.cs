@@ -19,6 +19,7 @@ internal sealed class TrayAppContext : ApplicationContext
     private readonly RegisteredWaitHandle _showWait;
     private int _configReloads;
     private DateTime _lastStatusWriteUtc = DateTime.MinValue;
+    private bool _menuOpen;
 
     public TrayAppContext()
     {
@@ -163,11 +164,20 @@ internal sealed class TrayAppContext : ApplicationContext
         menu.Items.Add("Einstellungen…", null, (_, _) => ShowSettings());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Beenden", null, (_, _) => ExitThread());
+        // While the context menu is open the hover popup must not appear: showing a new
+        // topmost window would close the menu at the first mouse move (28.10.2026).
+        menu.Opening += (_, _) =>
+        {
+            _menuOpen = true;
+            _popup.HidePopup();
+        };
+        menu.Closed += (_, _) => _menuOpen = false;
         return menu;
     }
 
     private void OnTrayHover()
     {
+        if (_menuOpen) return;
         if (_popup.Visible)
         {
             _popup.KeepAlive();
