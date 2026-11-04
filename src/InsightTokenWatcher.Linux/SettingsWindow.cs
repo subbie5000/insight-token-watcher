@@ -94,6 +94,7 @@ internal sealed class SettingsWindow : Window
 {
     private readonly EngineHost _host;
     private readonly ListBox _list = new();
+    private readonly List<AccountConfig> _listed = new(); // selection is by index; ItemsSource holds display strings
     private readonly CheckBox _balloons = new() { Content = "Warnmeldungen (Balloons)" };
     private readonly CheckBox _autostart = new() { Content = "Mit Anmeldung starten" };
     private readonly NumericUpDown _burnWindow = new() { Minimum = 15, Maximum = 480 };
@@ -137,32 +138,33 @@ internal sealed class SettingsWindow : Window
         ApplyList();
     }
 
-    private AccountConfig? Selected() => _list.SelectedItem as AccountConfig;
+    private AccountConfig? Selected() =>
+        _list.SelectedIndex >= 0 && _list.SelectedIndex < _listed.Count ? _listed[_list.SelectedIndex] : null;
 
     private void ApplyList()
     {
-        _list.ItemsSource = _host.Store.Accounts
-            .OrderBy(a => a.Provider).ThenBy(a => a.Name)
+        _listed.Clear();
+        _listed.AddRange(_host.Store.Accounts.OrderBy(a => a.Provider).ThenBy(a => a.Name));
+        _list.ItemsSource = _listed
             .Select(a => $"{a.Name} · {ProviderInfo.DisplayName(a.Provider)}"
                          + (a.Source == ConfigImporter.ImportSource ? " · per Import verwaltet" : "")
                          + (a.Enabled ? "" : " · deaktiviert"))
             .ToList();
     }
 
-    private void AddEdit(AccountConfig? acc)
+    private async void AddEdit(AccountConfig? acc)
     {
         var key = acc is null ? "" : _host.Store.PlainKey(acc);
         var dlg = new AccountDialog(acc, key);
-        dlg.ShowDialog(this);
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (dlg.Result is not { } r) return;
-            var plain = dlg.Tag as string;
-            _host.Store.UpsertAccount(r, string.IsNullOrEmpty(plain) ? null : plain);
-            _host.ReconfigureAccounts();
-            ApplyList();
-            _status.Text = "Gespeichert";
-        });
+        // await the dialog – before, the continuation ran immediately (Result still null) and
+        // nothing was saved; Selected() also always returned null because the list holds strings
+        await dlg.ShowDialog(this);
+        if (dlg.Result is not { } r) return;
+        var plain = dlg.Tag as string;
+        _host.Store.UpsertAccount(r, string.IsNullOrEmpty(plain) ? null : plain);
+        _host.ReconfigureAccounts();
+        ApplyList();
+        _status.Text = $"Gespeichert: {r.Name}";
     }
 
     private void Remove()

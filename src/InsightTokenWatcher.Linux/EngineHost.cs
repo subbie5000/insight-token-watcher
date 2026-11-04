@@ -40,9 +40,11 @@ internal sealed class EngineHost : IDisposable
             {
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite
             };
-            _watcher.Created += (_, _) => ScheduleReload();
-            _watcher.Changed += (_, _) => ScheduleReload();
-            _watcher.Renamed += (_, _) => ScheduleReload();
+            // FileSystemWatcher events fire on threadpool threads – a DispatcherTimer started
+            // there never ticks reliably (the Linux live-reload bug). Marshal to the UI thread.
+            _watcher.Created += (_, _) => Dispatcher.UIThread.Post(ScheduleReload);
+            _watcher.Changed += (_, _) => Dispatcher.UIThread.Post(ScheduleReload);
+            _watcher.Renamed += (_, _) => Dispatcher.UIThread.Post(ScheduleReload);
             _watcher.EnableRaisingEvents = true;
         }
         catch
