@@ -283,23 +283,34 @@ internal sealed class PopupCanvas : Control
         DrawButton(g, settings, IconFactory.Glyph.Settings, _hover == Zone.Settings, Ui.Muted);
     }
 
-    private void DrawButton(DrawingContext g, Rect r, IconFactory.Glyph glyph, bool hover, Color color)
+    // Button glyphs are rasterised once per (glyph, colour) and cached: before this cache
+    // every Render() rebuilt three bitmaps + PNG-encodes per frame (≈180/s).
+    private static readonly Dictionary<(IconFactory.Glyph glyph, uint argb), Avalonia.Media.Imaging.Bitmap> _glyphCache = new();
+
+    private static Avalonia.Media.Imaging.Bitmap GlyphBitmap(IconFactory.Glyph glyph, Color color)
     {
-        if (hover) g.DrawRectangle(Ui.ButtonHoverBrush, null, r.Inflate(2), 8);
-        var bitmap = new SKBitmap(96, 96);
+        var key = (glyph, (uint)((color.A << 24) | (color.R << 16) | (color.G << 8) | color.B));
+        if (_glyphCache.TryGetValue(key, out var cached)) return cached;
+        using var bitmap = new SKBitmap(96, 96);
         using (var c = new SKCanvas(bitmap))
         {
             c.Clear(SKColors.Transparent);
-            IconFactory.DrawGlyph(c, 12, 12, 72, glyph,
-                new SKColor(color.R, color.G, color.B, color.A));
+            IconFactory.DrawGlyph(c, 12, 12, 72, glyph, new SKColor(color.R, color.G, color.B, color.A));
         }
         using var img = SKImage.FromBitmap(bitmap);
         using var data = img.Encode(SKEncodedImageFormat.Png, 100);
         using var ms = new MemoryStream();
         data.SaveTo(ms);
         ms.Position = 0;
-        using var av = new Avalonia.Media.Imaging.Bitmap(ms);
-        g.DrawImage(av, r.Deflate(5));
+        var av = new Avalonia.Media.Imaging.Bitmap(ms);
+        _glyphCache[key] = av;
+        return av;
+    }
+
+    private void DrawButton(DrawingContext g, Rect r, IconFactory.Glyph glyph, bool hover, Color color)
+    {
+        if (hover) g.DrawRectangle(Ui.ButtonHoverBrush, null, r.Inflate(2), 8);
+        g.DrawImage(GlyphBitmap(glyph, color), r.Deflate(5));
     }
 
     private void DrawSummary(DrawingContext g, double x, double y)

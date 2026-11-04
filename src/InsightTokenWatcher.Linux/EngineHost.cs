@@ -21,6 +21,7 @@ internal sealed class EngineHost : IDisposable
     private readonly TrayHost? _tray;
     private int _configReloads;
     private DateTime _lastStatusWriteUtc = DateTime.MinValue;
+    private string _lastIconKey = "";
     private bool _notifyAvailable;
 
     public ConfigStore Store => _store;
@@ -154,6 +155,10 @@ internal sealed class EngineHost : IDisposable
                     weekFractions.Add(w.UsedFraction!.Value);
         }
         var week = weekFractions.Count > 0 ? weekFractions.Average() : (double?)null;
+        // rebuild the icon only when something actually changed (a PNG encode per second otherwise)
+        var key = $"{crit}|{errors}|{warn}|{anyData}|{(week is null ? -1 : (int)Math.Round(week.Value * 100))}";
+        if (key == _lastIconKey) return;
+        _lastIconKey = key;
         _tray?.UpdateIcon(crit, errors, warn, anyData, week);
     }
 
