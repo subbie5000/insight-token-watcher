@@ -74,7 +74,8 @@ public sealed class WindowEvaluation
 
 public static class Evaluator
 {
-    public static WindowEvaluation Evaluate(QuotaWindow w, IReadOnlyList<Sample> samples, DateTimeOffset now)
+    public static WindowEvaluation Evaluate(QuotaWindow w, IReadOnlyList<Sample> samples, DateTimeOffset now,
+        int burnWindowMinutes = 60)
     {
         var ev = new WindowEvaluation();
 
@@ -85,7 +86,7 @@ public static class Evaluator
             return ev;
         }
 
-        var rate = BurnMath.SlopePerMinute(samples, w.IsBalance, now);
+        var rate = BurnMath.SlopePerMinute(samples, w.IsBalance, now, burnWindowMinutes);
         ev.HasRate = rate is > 1e-9;
         ev.RatePerMin = rate ?? 0;
 

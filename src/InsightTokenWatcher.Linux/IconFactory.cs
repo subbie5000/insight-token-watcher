@@ -4,19 +4,23 @@ using SkiaSharp;
 
 namespace InsightTokenWatcher.Linux;
 
-/// <summary>Tray badge and window icon, drawn with Skia (no icon files needed).
-/// Same states as the Windows version: lime ring = all fine, coloured disc with the number
-/// of affected accounts = warn/crit, "!" for ten or more, grey ring = no data yet.</summary>
+/// <summary>Tray gauge and app icon, drawn with Skia (no icon files needed). Same states as the
+/// Windows version: ring = mean weekly usage of the Anthropic accounts with the percent inside,
+/// corner dot (red/amber) for problem accounts, grey ring = no data yet. The launcher/window
+/// icon is the brand mark (same ring, fixed 250° arc, no number).</summary>
 internal static class IconFactory
 {
     public static WindowIcon WindowIcon(int size = 128) =>
-        new(ToStream(draw: canvas => DrawBadge(canvas, size, Kind.Ring, 0)));
+        new(ToStream(size, canvas => DrawBrand(canvas, size)));
 
     public static WindowIcon TrayIcon(int crit, int errors, int warn, bool anyData, int size = 32,
-        double? weekFraction = null)
-    {
-        return new WindowIcon(ToStream(draw: canvas => DrawGauge(canvas, size, crit + errors, warn, anyData, weekFraction)));
-    }
+        double? weekFraction = null) =>
+        new(TrayIconPng(crit, errors, warn, anyData, size, weekFraction));
+
+    /// <summary>The PNG the tray receives (also inspected by the render harness).</summary>
+    internal static MemoryStream TrayIconPng(int crit, int errors, int warn, bool anyData, int size = 32,
+        double? weekFraction = null) =>
+        ToStream(size, canvas => DrawGauge(canvas, size, crit + errors, warn, anyData, weekFraction));
 
     /// <summary>Raster badge for the render harness / docs.</summary>
     internal static SKBitmap BadgePng(int crit, int errors, int warn, bool anyData, int size,
@@ -28,12 +32,26 @@ internal static class IconFactory
         return bmp;
     }
 
-    private enum Kind { Ring, Crit, Warn, None }
-
-    private static MemoryStream ToStream(Action<SKCanvas> draw)
+    /// <summary>Launcher/menu icon: the brand ring (lime arc), never a live percentage.</summary>
+    internal static SKBitmap AppIconPng(int size)
     {
-        using var bmp = new SKBitmap(256, 256);
+        var bmp = new SKBitmap(size, size);
+        using var c = new SKCanvas(bmp);
+        c.Clear(SKColors.Transparent);
+        DrawBrand(c, size);
+        return bmp;
+    }
+
+    /// <summary>Renders a drawing laid out for <paramref name="size"/> px into a 256 px PNG. The
+    /// canvas is scaled: before, a 32 px tray gauge sat in the top-left corner of a transparent
+    /// 256 px bitmap, so the tray showed it at an eighth of its size.</summary>
+    private static MemoryStream ToStream(int size, Action<SKCanvas> draw)
+    {
+        const int px = 256;
+        using var bmp = new SKBitmap(px, px);
         using var canvas = new SKCanvas(bmp);
+        canvas.Clear(SKColors.Transparent);
+        canvas.Scale(px / (float)size);
         draw(canvas);
         using var img = SKImage.FromBitmap(bmp);
         using var data = img.Encode(SKEncodedImageFormat.Png, 100);
@@ -94,40 +112,23 @@ internal static class IconFactory
         }
     }
 
-    private static void DrawBadge(SKCanvas c, int size, Kind kind, int count)
+    /// <summary>Brand mark (launcher/window icon): dark disc, grey track, lime 250° arc – the
+    /// tray gauge look without a number, readable on light and dark launchers.</summary>
+    private static void DrawBrand(SKCanvas c, int size)
     {
-        var s = size;
-        var fg = kind switch
+        var s = (float)size;
+        using (var bg = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill, Color = new SKColor(20, 22, 27, 235) })
+            c.DrawCircle(s / 2f, s / 2f, s * 0.5f, bg);
+        using (var track = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = s * 0.15f, Color = new SKColor(70, 76, 88) })
+            c.DrawCircle(s / 2f, s / 2f, s * 0.42f, track);
+        using var arc = new SKPaint
         {
-            Kind.Crit => new SKColor(240, 82, 82),
-            Kind.Warn => new SKColor(245, 181, 46),
-            _ => new SKColor(168, 225, 12)
+            IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = s * 0.15f,
+            Color = new SKColor(168, 225, 12), StrokeCap = SKStrokeCap.Round
         };
-        var neutral = new SKColor(128, 134, 146);
-
-        using var ring = new SKPaint
-        {
-            IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = s * 0.14f, Color = neutral
-        };
-        using var disc = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill, Color = fg };
-        using var text = new SKPaint
-        {
-            IsAntialias = true, TextAlign = SKTextAlign.Center, Typeface = SKTypeface.Default,
-            TextSize = s * 0.80f,
-            Color = kind == Kind.Warn ? SKColors.Black : SKColors.White
-        };
-
-        if (kind is Kind.Ring or Kind.None)
-        {
-            ring.Color = kind == Kind.Ring ? fg : neutral;
-            c.DrawArc(new SKRect(s * 0.12f, s * 0.12f, s * 0.88f, s * 0.88f), -90, kind == Kind.Ring ? 250 : 360, false, ring);
-            return;
-        }
-
-        c.DrawCircle(s / 2f, s / 2f, s * 0.46f, disc);
-        var label = count > 9 ? "!" : count.ToString();
-        // Segoe-style optical centering: digits sit slightly high in their line box
-        c.DrawText(label, s / 2f, s * 0.72f, text);
+        using var path = new SKPath();
+        path.AddArc(new SKRect(s * 0.08f, s * 0.08f, s * 0.92f, s * 0.92f), -90, 250);
+        c.DrawPath(path, arc);
     }
 
     /// <summary>Button glyphs as vector paths – no icon-font dependency on Linux.</summary>

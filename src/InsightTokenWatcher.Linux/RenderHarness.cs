@@ -1,5 +1,7 @@
 using Avalonia;
 using Avalonia.Headless;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 using InsightTokenWatcher.Core;
 using SkiaSharp;
@@ -18,7 +20,7 @@ internal static class RenderHarness
             return 2;
         }
         var outDir = args[0];
-        var scale = args.Length > 2 && args[1] == "--scale" ? double.Parse(args[2]) : 1.0;
+        var scale = args.Length > 2 && args[1] == "--scale" ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 1.0;
         Directory.CreateDirectory(outDir);
 
         var builder = AppBuilder.Configure<App>()
@@ -75,15 +77,80 @@ internal static class RenderHarness
 
         using (var iconFs = File.Create(Path.Combine(outDir, "app-icon.png")))
         {
-            using var iconImg = IconFactory.BadgePng(0, 0, 0, true, 256);
+            // launcher/menu icon: the brand ring – not the live "0 %" tray gauge
+            using var iconImg = IconFactory.AppIconPng(256);
             using var iconData = iconImg.Encode(SKEncodedImageFormat.Png, 100);
             iconData.SaveTo(iconFs);
         }
 
+        // ---- click self-test through the real pointer path (headless input) ----
+        var canvas = win.Canvas;
+        var pins = 0;
+        var sorts = new List<string>();
+        bool? leftPressedOnRelease = null;
+        MouseButton? initialButton = null;
+        canvas.PinClicked += () => pins++;
+        canvas.SortChanged += (c, d) => sorts.Add(c == SortColumn.None ? "None" : $"{c}{(d ? "-desc" : "-asc")}");
+        canvas.AddHandler(InputElement.PointerReleasedEvent, (object? _, PointerReleasedEventArgs e) =>
+        {
+            leftPressedOnRelease = e.GetCurrentPoint(canvas).Properties.IsLeftButtonPressed;
+            initialButton = e.InitialPressMouseButton;
+        }, RoutingStrategies.Tunnel, handledEventsToo: true);
+
+        void Click(Point p)
+        {
+            var at = canvas.TranslatePoint(p, win) ?? p;
+            win.MouseMove(at);
+            win.MouseDown(at, MouseButton.Left);
+            win.MouseUp(at, MouseButton.Left);
+            Pump(3);
+        }
+
+        win.Height = 2000;
+        Pump(4);
+        Click(canvas.PinButtonPoint());
+        Click(canvas.ColumnTitlePoint(SortColumn.Long));
+        Click(canvas.ColumnTitlePoint(SortColumn.Long));
+        Click(canvas.ColumnTitlePoint(SortColumn.Long));
+        Click(canvas.ColumnTitlePoint(SortColumn.Name));
+
+        // sorted by week, mouse resting on the title (footer explains the cycle)
+        canvas.SetSort(SortColumn.Long, false);
+        win.MouseMove(canvas.TranslatePoint(canvas.ColumnTitlePoint(SortColumn.Long), win) ?? default);
+        Pump(6);
+        frame = win.CaptureRenderedFrame()!;
+        using (var fs = File.Create(Path.Combine(outDir, "popup_sorted_week.png")))
+            frame.Save(fs);
+        canvas.SetSort(SortColumn.Long, true);
+        Pump(6);
+        frame = win.CaptureRenderedFrame()!;
+        using (var fs = File.Create(Path.Combine(outDir, "popup_sorted_week_desc.png")))
+            frame.Save(fs);
+
         File.WriteAllText(Path.Combine(outDir, "report.txt"),
-            $"scale={scale} width={win.Width} desiredHeight={win.Canvas.DesiredHeight} rows={rows.Count}\n");
+            $"scale={scale} width={win.Width} desiredHeight={win.Canvas.DesiredHeight} rows={rows.Count}\n" +
+            $"click: pinClicks={pins} (expect 1) sorts=[{string.Join(", ", sorts)}] (expect Long-asc, Long-desc, None, Name-asc)\n" +
+            $"release event: IsLeftButtonPressed={leftPressedOnRelease} InitialPressMouseButton={initialButton}\n" +
+            $"tray icon bitmap: {OpaqueBounds(IconFactory.TrayIconPng(0, 0, 1, true, weekFraction: 0.4))}\n");
 
         return 0;
+    }
+
+    /// <summary>Where the icon actually has pixels – a tray scales the whole bitmap, so the
+    /// gauge must fill it.</summary>
+    private static string OpaqueBounds(MemoryStream png)
+    {
+        using var ms = png;
+        using var bmp = SKBitmap.Decode(ms);
+        int minX = bmp.Width, minY = bmp.Height, maxX = -1, maxY = -1;
+        for (var y = 0; y < bmp.Height; y++)
+            for (var x = 0; x < bmp.Width; x++)
+                if (bmp.GetPixel(x, y).Alpha > 16)
+                {
+                    minX = Math.Min(minX, x); minY = Math.Min(minY, y);
+                    maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y);
+                }
+        return $"{bmp.Width}x{bmp.Height}, opaque ({minX},{minY})-({maxX},{maxY})";
     }
 
     private static void Pump(int frames)

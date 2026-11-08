@@ -119,7 +119,11 @@ internal sealed class PopupForm : Form
             {
                 var wa0 = screen0.WorkingArea;
                 var hPark = Math.Min(h0, (int)(wa0.Height * 0.85));
-                SetBounds(p.X, p.Y, w, hPark);
+                // the popup may have grown since it was parked (more accounts, warning lines):
+                // shift it back onto the screen instead of cutting off the footer and last rows
+                var x0 = Math.Clamp(p.X, wa0.Left, Math.Max(wa0.Left, wa0.Right - w));
+                var y0 = Math.Clamp(p.Y, wa0.Top, Math.Max(wa0.Top, wa0.Bottom - hPark));
+                SetBounds(x0, y0, w, hPark);
                 return;
             }
         }

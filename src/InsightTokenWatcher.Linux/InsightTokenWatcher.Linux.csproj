@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>insight-token-watcher</AssemblyName>
     <RootNamespace>InsightTokenWatcher.Linux</RootNamespace>
-    <Version>1.7.4</Version>
+    <Version>1.8.0</Version>
     <AssemblyTitle>Insight Token Watcher</AssemblyTitle>
     <Description>LLM-Kontostände und Quota-Fenster im System-Tray (Linux)</Description>
     <Company>Insight-IT</Company>

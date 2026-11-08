@@ -161,30 +161,56 @@ internal sealed class SettingsWindow : Window
         await dlg.ShowDialog(this);
         if (dlg.Result is not { } r) return;
         var plain = dlg.Tag as string;
-        _host.Store.UpsertAccount(r, string.IsNullOrEmpty(plain) ? null : plain);
-        _host.ReconfigureAccounts();
-        ApplyList();
-        _status.Text = $"Gespeichert: {r.Name}";
+        if (TryStore(() => _host.Store.UpsertAccount(r, string.IsNullOrEmpty(plain) ? null : plain), refreshList: true))
+            _status.Text = $"Gespeichert: {r.Name}";
     }
 
     private void Remove()
     {
         var acc = Selected();
         if (acc is null) return;
-        _host.Store.RemoveAccount(acc.Id);
-        _host.ReconfigureAccounts();
-        ApplyList();
-        _status.Text = "Entfernt";
+        if (TryStore(() => _host.Store.RemoveAccount(acc.Id), refreshList: true))
+            _status.Text = "Entfernt";
     }
 
     private void SaveSettings()
     {
-        _host.Store.Settings.ShowCritBalloons = _balloons.IsChecked == true;
-        _host.Store.Settings.BurnWindowMinutes = (int)(_burnWindow.Value ?? 60);
-        Autostart.Set(_autostart.IsChecked == true);
-        _host.Store.Settings.Autostart = _autostart.IsChecked == true;
-        _host.Store.Save();
-        _host.ReconfigureAccounts();
-        _status.Text = "Gespeichert";
+        var balloons = _balloons.IsChecked == true;
+        var burn = (int)(_burnWindow.Value ?? 60);
+        var autostart = _autostart.IsChecked == true;
+        if (TryStore(() =>
+            {
+                Autostart.Set(autostart);
+                _host.Store.UpdateSettings(s =>
+                {
+                    s.ShowCritBalloons = balloons;
+                    s.BurnWindowMinutes = burn;
+                    s.Autostart = autostart;
+                });
+            }))
+            _status.Text = "Gespeichert";
+    }
+
+    /// <summary>Saving can fail (file locked by an import, unreadable config, autostart dir) –
+    /// show it instead of letting the exception escape the event handler and end the app.</summary>
+    private bool TryStore(Action save, bool refreshList = false)
+    {
+        try
+        {
+            save();
+            _status.Foreground = Ui.FaintBrush;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _status.Foreground = Ui.CritBrush;
+            _status.Text = "Speichern fehlgeschlagen: " + ex.Message;
+            return false;
+        }
+        finally
+        {
+            _host.ReconfigureAccounts();
+            if (refreshList) ApplyList();
+        }
     }
 }

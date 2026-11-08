@@ -44,12 +44,20 @@ internal sealed class TrayAppContext : ApplicationContext
         _popup.Canvas.PopupMoved += loc =>
         {
             _popup.PreferredLocation = loc;
-            _store.Settings.PopupX = loc.X;
-            _store.Settings.PopupY = loc.Y;
-            _store.Save();
+            SaveUiSettings(s =>
+            {
+                s.PopupX = loc.X;
+                s.PopupY = loc.Y;
+            });
         };
         if (_store.Settings.PopupX is { } px && _store.Settings.PopupY is { } py)
             _popup.PreferredLocation = new Point(px, py);
+        _popup.Canvas.SetSort(_store.Settings.SortColumn, _store.Settings.SortDescending);
+        _popup.Canvas.SortChanged += (column, descending) => SaveUiSettings(s =>
+        {
+            s.SortColumn = column;
+            s.SortDescending = descending;
+        });
 
         _tray = new NotifyIcon
         {
@@ -137,8 +145,23 @@ internal sealed class TrayAppContext : ApplicationContext
             .Where(a => a.Enabled)
             .Select(a => (a, _store.PlainKey(a)))
             .ToList();
+        _engine.BurnWindowMinutes = _store.Settings.BurnWindowMinutes;
         _engine.Reconfigure(accs);
         OnEngineChanged();
+    }
+
+    /// <summary>UI-only state (order, parked position) – best effort: a failed write (file locked
+    /// by an import, unreadable config) must not take the tray app down with an exception dialog.</summary>
+    private void SaveUiSettings(Action<AppSettings> change)
+    {
+        try
+        {
+            _store.UpdateSettings(change);
+        }
+        catch
+        {
+            // the in-memory value still applies for this session
+        }
     }
 
     public void ShowSettings()

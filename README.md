@@ -87,10 +87,17 @@ crit notifications use `notify-send` when available.
   ("Woche: Leer in … – Reset erst in …!").
 - **Hover a row** for details (all windows, exact reset times, forecasts); **click a
   row** to re-poll that account immediately.
-- **Colors**: lime = OK, amber = tight, red = critical/error, grey = stale.
+- **Click a column title** to sort: KONTO by name, 5 STUNDEN / WOCHE by *which account
+  runs out first* (blocked and soon-empty accounts on top, then the fullest). Clicking
+  again reverses the order ("zuletzt leer"), a third click restores the default; the
+  choice is remembered.
+- **Cell colors** follow usage: lime = unused, amber = in use, red = limit reached,
+  grey = stale. Whether an account lasts until its reset is answered by the forecast
+  line and the row tint (amber for tight, critical or failing accounts).
 - If a poll fails, the last good values stay visible (marked stale) instead of
   being replaced by an error.
-- Tray icon: one ring segment per account in its status color.
+- Tray icon: a ring with the mean weekly usage of your Anthropic accounts and the percent
+  in the middle; a corner dot marks accounts with problems.
 - Balloon warning when an account turns critical (can be disabled).
 
 ## How the forecast works

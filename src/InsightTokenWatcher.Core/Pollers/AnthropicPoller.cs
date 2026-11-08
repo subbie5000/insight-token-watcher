@@ -37,9 +37,7 @@ public sealed class AnthropicPoller : IAccountPoller
         using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
         var body = resp.Content is null ? "" : await resp.Content.ReadAsStringAsync(ct);
 
-        var headers = resp.Headers
-            .Concat(resp.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
-            .ToDictionary(h => h.Key.ToLowerInvariant(), h => h.Value.FirstOrDefault() ?? "");
+        var headers = ProviderInfo.HeaderMap(resp);
 
         return ParseHeaders(cfg.Id, headers, (int)resp.StatusCode, body);
     }

@@ -235,6 +235,7 @@ internal sealed class SettingsForm : Form
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
             var snap = await ProviderInfo.Poller(acc.Provider).PollAsync(acc, key, http, default);
+            if (IsDisposed) return; // dialog closed during the (up to 25 s) test
             _status.ForeColor = snap.Ok ? Theme.Ok : Theme.Crit;
             _status.Text = snap.Ok
                 ? "OK – " + string.Join(" · ", snap.Windows.Select(w => w.IsBalance || w.IsInfoOnly
@@ -244,6 +245,7 @@ internal sealed class SettingsForm : Form
         }
         catch (Exception ex)
         {
+            if (IsDisposed) return;
             _status.ForeColor = Theme.Crit;
             _status.Text = "Fehler: " + ex.Message;
         }
@@ -265,20 +267,32 @@ internal sealed class SettingsForm : Form
 
     private void ApplyAndRefresh()
     {
-        _ctx.Store.Settings.ShowCritBalloons = _chkBalloons.Checked;
-        SetAutostart(_chkAutostart.Checked);
-        TrySave(_ctx.Store.Save);
+        var balloons = _chkBalloons.Checked;
+        var autostart = _chkAutostart.Checked;
+        var autostartOk = SetAutostart(autostart);
+        // applied on top of the latest file – an import may have replaced it meanwhile
+        TrySave(() => _ctx.Store.UpdateSettings(s =>
+        {
+            s.ShowCritBalloons = balloons;
+            if (autostartOk) s.Autostart = autostart;
+        }));
         RefreshList();
         _ctx.ReloadAccounts();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        var changed = _ctx.Store.Settings.ShowCritBalloons != _chkBalloons.Checked ||
-                      _ctx.Store.Settings.Autostart != _chkAutostart.Checked;
-        _ctx.Store.Settings.ShowCritBalloons = _chkBalloons.Checked;
-        SetAutostart(_chkAutostart.Checked);
-        if (changed) TrySave(_ctx.Store.Save);
+        var balloons = _chkBalloons.Checked;
+        var autostart = _chkAutostart.Checked;
+        var changed = _ctx.Store.Settings.ShowCritBalloons != balloons ||
+                      _ctx.Store.Settings.Autostart != autostart;
+        var autostartOk = SetAutostart(autostart); // also re-points the Run entry after the exe moved
+        if (changed)
+            TrySave(() => _ctx.Store.UpdateSettings(s =>
+            {
+                s.ShowCritBalloons = balloons;
+                if (autostartOk) s.Autostart = autostart;
+            }));
         base.OnFormClosing(e);
     }
 
@@ -295,20 +309,22 @@ internal sealed class SettingsForm : Form
         return false;
     }
 
-    private void SetAutostart(bool on)
+    /// <summary>Writes/removes the Run entry; true when the registry now matches <paramref name="on"/>.</summary>
+    private bool SetAutostart(bool on)
     {
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKey, true);
-            if (key is null) return;
+            if (key is null) return false;
             key.DeleteValue(LegacyAutostartValue, false); // renamed with the app
             if (on) key.SetValue(AutostartValue, $"\"{Environment.ProcessPath}\"");
             else key.DeleteValue(AutostartValue, false);
-            _ctx.Store.Settings.Autostart = on;
+            return true;
         }
         catch (Exception ex)
         {
             _status.Text = "Autostart-Fehler: " + ex.Message;
+            return false;
         }
     }
 }

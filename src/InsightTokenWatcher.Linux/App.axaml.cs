@@ -56,10 +56,18 @@ public partial class App : Application
             popup.Canvas.PopupMoved += loc =>
             {
                 popup.PreferredLocation = loc;
-                engine.Store.Settings.PopupX = loc.X;
-                engine.Store.Settings.PopupY = loc.Y;
-                engine.Store.Save();
+                engine.SaveUiSettings(s =>
+                {
+                    s.PopupX = loc.X;
+                    s.PopupY = loc.Y;
+                });
             };
+            popup.Canvas.SetSort(engine.Store.Settings.SortColumn, engine.Store.Settings.SortDescending);
+            popup.Canvas.SortChanged += (column, descending) => engine.SaveUiSettings(s =>
+            {
+                s.SortColumn = column;
+                s.SortDescending = descending;
+            });
             popup.Canvas.RefreshAllClicked += () => engine.ForceRefresh();
             popup.Canvas.RowClicked += id => engine.ForceRefresh(id);
             popup.Canvas.SettingsClicked += () =>

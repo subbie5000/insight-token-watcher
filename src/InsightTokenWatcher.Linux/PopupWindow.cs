@@ -75,20 +75,25 @@ internal sealed class PopupWindow : Window
     {
         if (Canvas.IsDragging) return; // don't yank the window mid-drag
 
-        var maxH = 0.0;
-        foreach (var s in Screens.All) maxH = Math.Max(maxH, s.WorkingArea.Height);
-        var h = Math.Min(Canvas.DesiredHeight, maxH * 0.85);
+        // Avalonia: Width/Height are DIPs, screen rects and Position are physical pixels. The old
+        // code mixed both, so on a HiDPI screen the popup hung off the right edge; it also kept a
+        // parked spot even after the popup had grown past the screen bottom.
+        var parked = PreferredLocation is { } p ? Screens.All.FirstOrDefault(s => s.Bounds.Contains(p)) : null;
+        var screen = parked ?? Screens.Primary ?? Screens.All.FirstOrDefault();
+        var wa = screen?.WorkingArea ?? new PixelRect(0, 0, 1920, 1040);
+        var scale = screen?.Scaling is > 0 and var sc ? sc : 1.0;
 
-        if (PreferredLocation is { } p && Screens.All.Any(s => s.Bounds.Contains(p)))
-        {
-            Position = p;
-            Height = h;
-            return;
-        }
-
-        // no global cursor position on Linux – anchor at the bottom-right of the primary screen
-        var wa = Screens.Primary?.WorkingArea ?? new PixelRect(0, 0, 1920, 1040);
-        Position = new PixelPoint(wa.Right - (int)Width - 12, wa.Bottom - (int)h - 12);
-        Height = h;
+        var hDip = Math.Min(Canvas.DesiredHeight, wa.Height / scale * 0.85);
+        var wPx = (int)Math.Ceiling(Width * scale);
+        var hPx = (int)Math.Ceiling(hDip * scale);
+        var margin = (int)(12 * scale);
+        // no global cursor position on Linux – unparked, it sits at the bottom-right of the primary screen
+        var target = parked is not null
+            ? PreferredLocation!.Value
+            : new PixelPoint(wa.Right - wPx - margin, wa.Bottom - hPx - margin);
+        Position = new PixelPoint(
+            Math.Clamp(target.X, wa.X, Math.Max(wa.X, wa.Right - wPx)),
+            Math.Clamp(target.Y, wa.Y, Math.Max(wa.Y, wa.Bottom - hPx)));
+        Height = hDip;
     }
 }

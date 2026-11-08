@@ -27,6 +27,7 @@ public static class WindowLayout
             Span = windows.FirstOrDefault(w => w.IsBalance) ?? windows.FirstOrDefault(w => w.IsInfoOnly)
         };
 
+        var unknown = new List<QuotaWindow>();
         foreach (var w in windows)
         {
             if (ReferenceEquals(w, r.Span)) continue;
@@ -47,7 +48,14 @@ public static class WindowLayout
                     if (r.Long is null) r.Long = w; else r.Extras.Add(w);
                 }
             }
-            else if (r.Short is null) r.Short = w;
+            else unknown.Add(w);
+        }
+
+        // windows of unknown length only fill what is left – before, one listed first (e.g. a
+        // monthly MCP quota without a known unit) took the "5 h" column from the real 5 h window
+        foreach (var w in unknown)
+        {
+            if (r.Short is null) r.Short = w;
             else if (r.Long is null) r.Long = w;
             else r.Extras.Add(w);
         }

@@ -7,3 +7,4 @@ dist-cli/
 *.zip
 import.json
 *.secrets.json
+dist-linux/

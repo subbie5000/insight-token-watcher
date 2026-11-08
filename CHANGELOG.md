@@ -4,6 +4,71 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.8.0] - 2026-11-08
+
+### Added
+- **Sort by clicking a column title** (KONTO, 5 STUNDEN / 5 H, WOCHE). Each click cycles
+  ascending → descending → default order; the choice is remembered.
+  - KONTO: natural name order ("Anthropic 2" before "Anthropic 10").
+  - 5 STUNDEN / WOCHE: *which account runs out first*. Accounts projected to run dry within
+    the column's horizon come first (blocked ones at the top, then soonest empty – a quota
+    window before its reset, a balance whose runway ends within 5 h / a week), then the
+    accounts that make it, fullest first. Rows without data for the column stay at the end.
+  - The active column shows a direction triangle and what the order means ("zuerst leer",
+    "zuletzt leer", "A–Z"); hovering a title explains the click cycle in the footer.
+
+### Fixed
+- **Linux:** clicks on pin, refresh, settings and rows never fired (the release handler
+  checked "left button pressed", which Avalonia reports as false on release).
+- **Linux:** the tray icon was drawn into the top-left 32 px of a 256 px bitmap and showed
+  as a tiny dot; the launcher icon showed a "0 %" gauge instead of the brand ring.
+- **Linux:** cells now follow the same column rules as Windows (a weekly-only account no
+  longer shows its week under "5 H", info-only accounts no longer get a bar), stale values
+  are grey and raise no alarms, runways need a measured rate and count down live, the
+  stale reason distinguishes token expiry / no connection / failed query, waiting accounts
+  no longer count as "OK", disabled accounts are hidden, "noch X/Y" labels are unambiguous
+  and use German decimals, save errors in the settings show instead of ending the app.
+- **Linux:** popup placement mixed device-independent and physical pixels (off-screen on
+  HiDPI screens).
+- A parked popup that grew since it was parked is shifted back onto the screen
+  (Windows and Linux) instead of cutting off its footer.
+- UI saves (sort order, parked position, settings) no longer overwrite a config import that
+  landed since the last reload, and editing an account without touching its key keeps a
+  key the import rotated meanwhile.
+- The "Prognose-Zeitfenster" setting (burn-rate look-back) was ignored; it now applies.
+- Import: Groq, Together and Cerebras map to their own provider types, Mistral, xAI,
+  Gemini and Perplexity are importable, info-only providers get their 1 h default interval.
+- Generic OpenAI-compatible providers: a reset header like "20ms" was read as 20 minutes.
+- Epoch timestamps in µs/ns are recognised and out-of-range values no longer throw.
+- A window of unknown length listed first (e.g. a monthly MCP quota) no longer takes the
+  "5 h" column from the real 5-hour window.
+- OpenRouter: an unexpected `/credits` response no longer discards the key data.
+- Windows: the tray context menu no longer closes on the first mouse move (the hover popup
+  opened over it); a failed save of the parked position can no longer raise an error dialog.
+
+## [1.7.4] - 2026-11-04
+
+### Fixed
+- Linux: adding, editing and removing accounts in the settings saved nothing.
+- Linux: live config reload did not tick reliably (timer started off the UI thread).
+
+## [1.7.3] - 2026-11-04
+
+### Changed
+- Tray icon: a ring showing the mean weekly usage of all Anthropic accounts with the percent
+  in the middle (red at 100 %); problem accounts show as a corner dot.
+
+## [1.7.2] - 2026-10-28
+
+### Changed
+- Windows: critical/error rows are tinted amber instead of red; the text stays white.
+
+## [1.7.1] - 2026-10-23
+
+### Changed
+- Cell colours follow usage: lime when unused, amber while in use, red at the limit,
+  grey for stale values. Warning lines keep answering "does it last until the reset?".
+
 ## [1.7.0] - 2026-10-18
 
 ### Added

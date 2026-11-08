@@ -40,8 +40,8 @@ if (args[0] == "--app-config")
         {
             Id = (a.TryGetProperty("Id", out var idEl) ? idEl : a.GetProperty("id")).GetGuid(),
             Name = Str("Name", "name") ?? "?",
-            Provider = Enum.Parse<ProviderKind>(Str("Provider", "provider") ?? "Anthropic"),
-            Auth = Enum.Parse<AuthKind>(Str("Auth", "auth") ?? "ApiKeyHeader"),
+            Provider = Enum.Parse<ProviderKind>(Str("Provider", "provider") ?? "Anthropic", ignoreCase: true),
+            Auth = Enum.Parse<AuthKind>(Str("Auth", "auth") ?? "ApiKeyHeader", ignoreCase: true),
             ApiKeyProtected = Str("ApiKeyProtected", "apiKeyProtected") ?? "",
             BaseUrlOverride = Str("BaseUrlOverride", "baseUrlOverride"),
             Model = Str("Model", "model") ?? "",

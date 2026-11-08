@@ -18,7 +18,8 @@ internal static class DemoData
 
         WindowEvaluation E(Health h, double rate, TimeSpan? tte, TimeSpan? ttr, string verdict) => new()
         {
-            Health = h, RatePerMin = rate, HasRate = rate > 0,
+            // like the real Evaluator: a time-to-empty exists only together with a measured rate
+            Health = h, RatePerMin = rate > 0 ? rate : tte is null ? 0 : 0.001, HasRate = rate > 0 || tte is not null,
             TimeToEmpty = tte, TimeToReset = ttr, Verdict = verdict
         };
 
@@ -50,7 +51,11 @@ internal static class DemoData
                         : w.UsedFraction is { } u && u < 1
                             ? (TimeSpan?)TimeSpan.FromMinutes((1 - u) * (w.WindowMinutes ?? 300) / (0.002 + 0.000001))
                             : null;
-                    return E(Health.Unknown, 0, tte, ttr, "");
+                    // balance forecast colours like the real Evaluator (red < 12 h, amber < 2 d)
+                    var h = w.IsBalance && tte is { } x
+                        ? x < TimeSpan.FromHours(12) ? Health.Crit : x < TimeSpan.FromDays(2) ? Health.Warn : Health.Ok
+                        : Health.Unknown;
+                    return E(h, 0, tte, ttr, "");
                 }),
                 Health = health,
                 Failure = failure,

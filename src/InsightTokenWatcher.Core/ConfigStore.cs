@@ -12,6 +12,10 @@ public sealed class AppSettings
     /// <summary>Position where the user parked the popup by dragging it (null = near the tray).</summary>
     public int? PopupX { get; set; }
     public int? PopupY { get; set; }
+
+    /// <summary>Popup order chosen via the column titles (None = provider order).</summary>
+    public SortColumn SortColumn { get; set; }
+    public bool SortDescending { get; set; }
 }
 
 public sealed class ConfigFile
@@ -30,6 +34,8 @@ public sealed class ConfigStore
     private readonly string _path;
     private ConfigFile _cfg = new();
     private bool _loadFailed;
+    private DateTime _seenWriteUtc;
+    private long _seenLength = -1;
 
     public ConfigStore()
     {
@@ -93,6 +99,7 @@ public sealed class ConfigStore
                 var json = File.ReadAllText(_path);
                 _cfg = JsonSerializer.Deserialize<ConfigFile>(json, JsonOptions()) ?? new ConfigFile();
                 _loadFailed = false;
+                RememberFileState();
                 return;
             }
             catch (IOException)
@@ -124,6 +131,7 @@ public sealed class ConfigStore
                 if (cfg is null) return false;
                 _cfg = cfg;
                 _loadFailed = false;
+                RememberFileState();
                 return true;
             }
             catch (IOException)
@@ -159,6 +167,7 @@ public sealed class ConfigStore
             try
             {
                 File.Move(tmp, _path, true);
+                RememberFileState();
                 return;
             }
             catch (IOException ex)
@@ -170,19 +179,64 @@ public sealed class ConfigStore
         throw last!;
     }
 
+    /// <summary>
+    /// Changes app settings on top of the latest file content, then saves. A UI tweak (sort
+    /// order, popup position, checkboxes) must not overwrite an import that replaced the file
+    /// since the last reload – that would silently drop e.g. a freshly rotated token.
+    /// </summary>
+    public void UpdateSettings(Action<AppSettings> change)
+    {
+        RefreshIfChangedOnDisk();
+        change(_cfg.Settings);
+        Save();
+    }
+
     public void UpsertAccount(AccountConfig acc, string? newPlainKey, bool save = true)
     {
+        if (save) RefreshIfChangedOnDisk(); // batch callers (the importer) work on a fresh load
+        var idx = _cfg.Accounts.FindIndex(a => a.Id == acc.Id);
         if (newPlainKey is not null)
             acc.ApiKeyProtected = KeyProtector.Protect(newPlainKey, acc.Id);
-        var idx = _cfg.Accounts.FindIndex(a => a.Id == acc.Id);
+        else if (idx >= 0)
+            acc.ApiKeyProtected = _cfg.Accounts[idx].ApiKeyProtected; // key untouched: keep the stored (maybe rotated) one
         if (idx >= 0) _cfg.Accounts[idx] = acc; else _cfg.Accounts.Add(acc);
         if (save) Save();
     }
 
     public void RemoveAccount(Guid id, bool save = true)
     {
+        if (save) RefreshIfChangedOnDisk();
         _cfg.Accounts.RemoveAll(a => a.Id == id);
         if (save) Save();
+    }
+
+    private void RememberFileState()
+    {
+        try
+        {
+            var fi = new FileInfo(_path);
+            _seenWriteUtc = fi.Exists ? fi.LastWriteTimeUtc : default;
+            _seenLength = fi.Exists ? fi.Length : -1;
+        }
+        catch
+        {
+            // best effort – worst case the next mutation reloads once more
+        }
+    }
+
+    /// <summary>Another process (an import) replaced the file since we last read or wrote it → reload first.</summary>
+    private void RefreshIfChangedOnDisk()
+    {
+        try
+        {
+            var fi = new FileInfo(_path);
+            if (fi.Exists && (fi.LastWriteTimeUtc != _seenWriteUtc || fi.Length != _seenLength))
+                TryReload();
+        }
+        catch
+        {
+            // keep the in-memory state
+        }
     }
 
     public string PlainKey(AccountConfig acc) =>

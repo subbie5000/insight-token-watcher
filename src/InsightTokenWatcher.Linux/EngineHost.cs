@@ -97,7 +97,23 @@ internal sealed class EngineHost : IDisposable
 
     public void ReconfigureAccounts()
     {
-        _engine.Reconfigure(_store.Accounts.Select(a => (a, _store.PlainKey(a))).ToList());
+        // disabled accounts are not shown (as on Windows) – before, they sat in the popup as
+        // rows that never got a value
+        _engine.BurnWindowMinutes = _store.Settings.BurnWindowMinutes;
+        _engine.Reconfigure(_store.Accounts.Where(a => a.Enabled).Select(a => (a, _store.PlainKey(a))).ToList());
+    }
+
+    /// <summary>UI-only state (order, parked position) – best effort, never throws.</summary>
+    public void SaveUiSettings(Action<AppSettings> change)
+    {
+        try
+        {
+            _store.UpdateSettings(change);
+        }
+        catch
+        {
+            // the in-memory value still applies for this session
+        }
     }
 
     public void ForceRefresh(Guid? id = null) => _engine.ForceRefresh(id);

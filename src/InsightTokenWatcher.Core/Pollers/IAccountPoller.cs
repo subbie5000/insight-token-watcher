@@ -94,6 +94,17 @@ public static class ProviderInfo
         _ => throw new ArgumentOutOfRangeException(nameof(k))
     };
 
+    /// <summary>Response + content headers with lower-case names; a repeated name keeps its first
+    /// value (ToDictionary threw on a duplicate and failed the whole poll).</summary>
+    public static Dictionary<string, string> HeaderMap(HttpResponseMessage resp)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var h in resp.Headers.Concat(resp.Content?.Headers ??
+                     Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>()))
+            map.TryAdd(h.Key.ToLowerInvariant(), h.Value.FirstOrDefault() ?? "");
+        return map;
+    }
+
     public static string? JsonString(JsonElement el, params string[] names)
     {
         foreach (var n in names)

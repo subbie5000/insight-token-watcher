@@ -92,7 +92,12 @@ public sealed class OpenRouterPoller : IAccountPoller
                             Note = $"Gekauft {Formatting.Money(credits, "USD")} · Verbraucht {Formatting.Money(usage, "USD")}"
                         });
                 }
-                catch (JsonException) { /* keep key info */ }
+                // an unexpected shape (no "data") used to escape as KeyNotFoundException and
+                // throw away the key data from step 1
+                catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
+                {
+                    /* keep key info */
+                }
             }
         }
 

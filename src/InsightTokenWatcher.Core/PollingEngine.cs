@@ -156,9 +156,18 @@ public sealed class PollingEngine : IDisposable
         return _runtimes.Values
             .Select(rt => { lock (rt.Gate) return ToViewLocked(rt); })
             .OrderBy(v => Array.IndexOf(DisplayOrder, v.Config.Provider))
-            .ThenBy(v => v.Config.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(v => v.Config.Name, AccountSort.NaturalOrder) // "Anthropic 2" before "Anthropic 10"
             .ToList();
     }
+
+    /// <summary>Look-back for the burn rate (settings: 15–480 min). Used from the next poll on.</summary>
+    public int BurnWindowMinutes
+    {
+        get => _burnWindowMinutes;
+        set => _burnWindowMinutes = Math.Clamp(value, 15, 480);
+    }
+
+    private volatile int _burnWindowMinutes = 60;
 
     private async Task LoopAsync(CancellationToken ct)
     {
@@ -249,7 +258,7 @@ public sealed class PollingEngine : IDisposable
                     if (!rt.Series.TryGetValue(w.Key, out var series))
                         rt.Series[w.Key] = series = new WindowSeries();
                     series.Add(new Sample(now, w.UsedFraction ?? 0, w.Remaining), w.IsBalance);
-                    rt.Evals[w.Key] = Evaluator.Evaluate(w, series.Samples, now);
+                    rt.Evals[w.Key] = Evaluator.Evaluate(w, series.Samples, now, _burnWindowMinutes);
                 }
                 foreach (var gone in rt.Evals.Keys.Where(k => !keys.Contains(k)).ToList())
                 {

@@ -743,6 +743,228 @@ Run("infoOnly poller: perplexity ping shape and together bearer", () =>
     Check(url!.EndsWith("/v1/models"), "together url " + url);
 });
 
+// ---------- sorting (column titles) ----------
+
+var sortNow = DateTimeOffset.UtcNow;
+
+AccountView SortView(string name, double? weekUsed = null, double? resetHours = 48, double? tteHours = null,
+    bool stale = false, bool balance = false, bool loading = false, double? fiveUsed = null, double? runwayHours = null)
+{
+    var cfg = new AccountConfig { Name = name, Provider = balance ? ProviderKind.DeepSeek : ProviderKind.Anthropic };
+    if (loading) return new AccountView { Config = cfg };
+    var snap = new AccountSnapshot { AccountId = cfg.Id, Ok = true, AtUtc = sortNow };
+    var evals = new Dictionary<string, WindowEvaluation>();
+    if (balance)
+    {
+        snap.Windows.Add(new QuotaWindow { Key = "bal", Label = "Guthaben", IsBalance = true, Remaining = 20, Unit = "USD" });
+        if (runwayHours is { } rw)
+            evals["bal"] = new WindowEvaluation { HasRate = true, RatePerMin = 0.01, TimeToEmpty = TimeSpan.FromHours(rw) };
+    }
+    if (fiveUsed is { } f)
+        snap.Windows.Add(new QuotaWindow { Key = "5h", Label = "5h", WindowMinutes = 300, UsedFraction = f,
+            ResetAtUtc = sortNow.AddHours(3) });
+    if (weekUsed is { } u)
+    {
+        snap.Windows.Add(new QuotaWindow { Key = "7d", Label = "7d", WindowMinutes = 10080, UsedFraction = u,
+            ResetAtUtc = resetHours is { } rh ? sortNow.AddHours(rh) : null });
+        evals["7d"] = tteHours is { } t
+            ? new WindowEvaluation { HasRate = true, RatePerMin = 0.001, TimeToEmpty = TimeSpan.FromHours(t) }
+            : new WindowEvaluation();
+    }
+    return stale
+        ? new AccountView { Config = cfg, Snapshot = AccountSnapshot.Failure(cfg.Id, "HTTP 401 expired"), LastGood = snap, Evals = evals }
+        : new AccountView { Config = cfg, Snapshot = snap, LastGood = snap, Evals = evals };
+}
+
+string Names(IEnumerable<AccountView> views) => string.Join(",", views.Select(v => v.Config.Name));
+
+Run("sort: names in natural order (2 before 10), case-insensitive", () =>
+{
+    var input = new[] { "Anthropic 10", "DeepSeek", "Anthropic 2", "anthropic 1" }.Select(n => SortView(n, 0.1)).ToList();
+    Check(Names(AccountSort.Apply(input, SortColumn.Name, false, sortNow)) == "anthropic 1,Anthropic 2,Anthropic 10,DeepSeek",
+        "asc " + Names(AccountSort.Apply(input, SortColumn.Name, false, sortNow)));
+    Check(Names(AccountSort.Apply(input, SortColumn.Name, true, sortNow)) == "DeepSeek,Anthropic 10,Anthropic 2,anthropic 1",
+        "desc " + Names(AccountSort.Apply(input, SortColumn.Name, true, sortNow)));
+    Check(Names(AccountSort.Apply(input, SortColumn.None, false, sortNow)) == "Anthropic 10,DeepSeek,Anthropic 2,anthropic 1",
+        "None keeps the given (engine) order");
+});
+
+Run("sort: title click cycles ascending → descending → default", () =>
+{
+    Check(AccountSort.Next(SortColumn.None, false, SortColumn.Long) == (SortColumn.Long, false), "1st click");
+    Check(AccountSort.Next(SortColumn.Long, false, SortColumn.Long) == (SortColumn.Long, true), "2nd click");
+    Check(AccountSort.Next(SortColumn.Long, true, SortColumn.Long) == (SortColumn.None, false), "3rd click");
+    Check(AccountSort.Next(SortColumn.Long, true, SortColumn.Name) == (SortColumn.Name, false), "other column starts ascending");
+});
+
+Run("sort: week – runs out first on top, then fullest; no week window always last", () =>
+{
+    var input = new List<AccountView>
+    {
+        SortView("E-balance", balance: true),
+        SortView("A-blocked", weekUsed: 1.0),
+        SortView("F-loading", loading: true),
+        SortView("B-empty-in-10h", weekUsed: 0.5, resetHours: 72, tteHours: 10),
+        SortView("C-80-idle", weekUsed: 0.8),
+        SortView("D-20-safe", weekUsed: 0.2, resetHours: 24, tteHours: 50), // reset comes first
+        SortView("G-90-stale", weekUsed: 0.9, tteHours: 1, stale: true)       // no projection on stale data
+    };
+    var asc = Names(AccountSort.Apply(input, SortColumn.Long, false, sortNow));
+    Check(asc == "A-blocked,B-empty-in-10h,G-90-stale,C-80-idle,D-20-safe,E-balance,F-loading", "asc " + asc);
+    var desc = Names(AccountSort.Apply(input, SortColumn.Long, true, sortNow));
+    Check(desc == "E-balance,D-20-safe,C-80-idle,G-90-stale,B-empty-in-10h,A-blocked,F-loading", "desc " + desc);
+});
+
+Run("sort: a balance running dry within the column horizon ranks as 'runs out'", () =>
+{
+    var input = new List<AccountView>
+    {
+        SortView("DeepSeek-27d", balance: true, runwayHours: 27 * 24),
+        SortView("Moonshot-unmeasured", balance: true),
+        SortView("OpenRouter-16h", balance: true, runwayHours: 16.7),
+        SortView("Claude-50", weekUsed: 0.5),
+        SortView("Groq-error", loading: true)
+    };
+    var asc = Names(AccountSort.Apply(input, SortColumn.Long, false, sortNow));
+    Check(asc == "OpenRouter-16h,Claude-50,DeepSeek-27d,Moonshot-unmeasured,Groq-error", "week asc " + asc);
+    var desc = Names(AccountSort.Apply(input, SortColumn.Long, true, sortNow));
+    Check(desc == "DeepSeek-27d,Moonshot-unmeasured,Claude-50,OpenRouter-16h,Groq-error", "week desc " + desc);
+    var five = Names(AccountSort.Apply(input, SortColumn.Short, false, sortNow));
+    Check(five == "DeepSeek-27d,Moonshot-unmeasured,OpenRouter-16h,Claude-50,Groq-error", "16 h > 5 h horizon: " + five);
+});
+
+Run("sort: 5h column uses the short window; a passed reset counts as fresh", () =>
+{
+    var input = new List<AccountView>
+    {
+        SortView("week-only", weekUsed: 0.9),
+        SortView("five-70", weekUsed: 0.1, fiveUsed: 0.7),
+        SortView("five-30", weekUsed: 0.1, fiveUsed: 0.3),
+        SortView("week-reset-passed", weekUsed: 1.0, resetHours: -1)
+    };
+    Check(Names(AccountSort.Apply(input, SortColumn.Short, false, sortNow)) == "five-70,five-30,week-only,week-reset-passed",
+        "short " + Names(AccountSort.Apply(input, SortColumn.Short, false, sortNow)));
+    var week = Names(AccountSort.Apply(input, SortColumn.Long, false, sortNow));
+    Check(week == "week-only,five-70,five-30,week-reset-passed", "blocked but reset passed is not 'empty' " + week);
+});
+
+Run("layout: a window of unknown length listed first does not take the 5 h column", () =>
+{
+    var mcp = new QuotaWindow { Key = "TIME_LIMIT-1", Label = "MCP / Zeitfenster", UsedFraction = 0.1 };
+    var five = new QuotaWindow { Key = "c1", WindowMinutes = 300, UsedFraction = 0.3 };
+    var week = new QuotaWindow { Key = "c2", WindowMinutes = 10080, UsedFraction = 0.5 };
+    var l = WindowLayout.Classify(new List<QuotaWindow> { mcp, five, week });
+    Check(l.Short == five && l.Long == week, "short/long by length");
+    Check(l.Extras.Count == 1 && l.Extras[0] == mcp, "unknown one goes to extras");
+    var g = WindowLayout.Classify(new List<QuotaWindow> { mcp, new QuotaWindow { Key = "t" } });
+    Check(g.Short == mcp, "unknown windows still fill free columns in order");
+});
+
+Run("time: epoch units by magnitude, never throws", () =>
+{
+    const long s = 1774933200;
+    Check(TimeParsing.FromEpochGuess(s).ToUnixTimeSeconds() == s, "seconds");
+    Check(TimeParsing.FromEpochGuess(s * 1000).ToUnixTimeSeconds() == s, "ms");
+    Check(TimeParsing.FromEpochGuess(s * 1_000_000).ToUnixTimeSeconds() == s, "µs");
+    Check(TimeParsing.FromEpochGuess(s * 1_000_000_000).ToUnixTimeSeconds() == s, "ns");
+    Check(TimeParsing.FromEpochGuess(long.MaxValue).Year == 2262, "max as ns, no throw");
+    Check(TimeParsing.FromEpochGuess(long.MinValue).Year == 1677, "min as ns, no throw");
+    Check(TimeParsing.FromEpochGuess(900_000_000_000).Year == 9999, "absurd seconds clamped");
+});
+
+Run("generic reset: '20ms' is milliseconds, not minutes", () =>
+{
+    var now = DateTimeOffset.UtcNow;
+    var r = GenericOpenAiPoller.ParseReset("20ms", now)!.Value;
+    Check((r - now).TotalSeconds < 1, "20ms → " + (r - now));
+    Check(Math.Abs((GenericOpenAiPoller.ParseReset("2m59.5s", now)!.Value - now).TotalSeconds - 179.5) < 0.01, "2m59.5s");
+    Check(Math.Abs((GenericOpenAiPoller.ParseReset("6m0s", now)!.Value - now).TotalSeconds - 360) < 0.01, "6m0s");
+});
+
+Run("sort: on a tie the confirmed value ranks before the stale one", () =>
+{
+    var input = new List<AccountView> { SortView("stale-100", weekUsed: 1.0, stale: true), SortView("live-100", weekUsed: 1.0) };
+    Check(Names(AccountSort.Apply(input, SortColumn.Long, false, sortNow)) == "live-100,stale-100", "asc");
+    Check(Names(AccountSort.Apply(input, SortColumn.Long, true, sortNow)) == "live-100,stale-100", "desc");
+});
+
+Run("import: every provider kind is importable under its own type", () =>
+{
+    foreach (var (raw, want) in new (string, ProviderKind)[]
+             {
+                 ("groq", ProviderKind.Groq), ("Together", ProviderKind.Together), ("cerebras", ProviderKind.Cerebras),
+                 ("mistral", ProviderKind.Mistral), ("xai", ProviderKind.Xai), ("grok", ProviderKind.Xai),
+                 ("gemini", ProviderKind.Gemini), ("perplexity", ProviderKind.Perplexity), ("glm", ProviderKind.Zai),
+                 ("kimi-code", ProviderKind.KimiCode), ("openai-compatible", ProviderKind.GenericOpenAi),
+                 ("z.ai", ProviderKind.Zai), ("anthropic", ProviderKind.Anthropic)
+             })
+        Check(PlainAccountFile.TryParseProvider(raw, out var got) && got == want, $"{raw} → {got}");
+    foreach (var k in Enum.GetValues<ProviderKind>())
+        Check(PlainAccountFile.TryParseProvider(k.ToString(), out var g) && g == k, "enum name " + k);
+    var (cfg, _, err) = new PlainAccountFile().ToConfig(new PlainAccountDto { Name = "G", Provider = "gemini", ApiKey = "k" });
+    Check(err is null && cfg.PollSeconds == 3600, "info-only default interval, got " + cfg?.PollSeconds);
+});
+
+Run("engine: default order is natural by name within a provider", () =>
+{
+    using var eng = new PollingEngine();
+    var list = new[] { "Anthropic 10", "Anthropic 9", "Anthropic 1" }
+        .Select(n => (new AccountConfig { Name = n, Provider = ProviderKind.Anthropic }, "k")).ToList();
+    eng.Reconfigure(list);
+    Check(Names(eng.GetView()) == "Anthropic 1,Anthropic 9,Anthropic 10", Names(eng.GetView()));
+});
+
+Run("burn window: the setting changes the look-back (was ignored before)", () =>
+{
+    var now = DateTimeOffset.UtcNow;
+    var w = new QuotaWindow { Key = "7d", WindowMinutes = 10080, UsedFraction = 0.5, ResetAtUtc = now.AddDays(3) };
+    // consumption only between 120 and 60 minutes ago, flat since
+    var samples = new[] { (120, 0.1), (90, 0.3), (60, 0.5), (30, 0.5), (0, 0.5) }
+        .Select(p => new Sample(now.AddMinutes(-p.Item1), p.Item2, null)).ToList();
+    Check(!Evaluator.Evaluate(w, samples, now, 60).HasRate, "60 min sees no consumption");
+    Check(Evaluator.Evaluate(w, samples, now, 180).HasRate, "180 min sees the earlier consumption");
+    using var eng = new PollingEngine { BurnWindowMinutes = 5 };
+    Check(eng.BurnWindowMinutes == 15, "clamped to 15, got " + eng.BurnWindowMinutes);
+});
+
+Run("config store: a UI save keeps an import that landed meanwhile; untouched key stays rotated", () =>
+{
+    var dir = Path.Combine(Path.GetTempPath(), "itw-test-" + Guid.NewGuid().ToString("N")[..8]);
+    ConfigStore.AppDirOverride = dir;
+    try
+    {
+        var app = new ConfigStore();                        // the running tray app
+        var acc = new AccountConfig { Name = "Claude 1", Provider = ProviderKind.Anthropic };
+        app.UpsertAccount(acc, "old-token");
+        var appCopy = app.Accounts[0].Clone();               // what an open edit dialog holds
+
+        Thread.Sleep(20);
+        var import = new ConfigStore();                      // the sync job's --import
+        var rotated = import.Accounts[0].Clone();
+        import.UpsertAccount(rotated, "new-token", save: false);
+        import.UpsertAccount(new AccountConfig { Name = "Claude 2", Provider = ProviderKind.Anthropic }, "t2", save: false);
+        import.Save();
+
+        app.UpdateSettings(s => s.SortColumn = SortColumn.Long);   // click on WOCHE
+        var after = new ConfigStore();
+        Check(after.Accounts.Count == 2, "import kept, got " + after.Accounts.Count);
+        Check(after.Settings.SortColumn == SortColumn.Long, "sort saved");
+
+        appCopy.Name = "Claude 1 (umbenannt)";                       // edit without touching the key
+        app.UpsertAccount(appCopy, null);
+        var final = new ConfigStore();
+        var c1 = final.Accounts.Single(a => a.Id == acc.Id);
+        Check(c1.Name == "Claude 1 (umbenannt)", "rename saved");
+        Check(final.PlainKey(c1) == "new-token", "rotated token survives the stale dialog copy, got " + final.PlainKey(c1));
+        Check(final.Accounts.Count == 2, "second import account still there");
+    }
+    finally
+    {
+        ConfigStore.AppDirOverride = null;
+        Directory.Delete(dir, true);
+    }
+});
+
 Console.WriteLine();
 Console.WriteLine($"{passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;

@@ -30,10 +30,15 @@ public static class TimeParsing
 
     public static DateTimeOffset FromEpochGuess(long value)
     {
-        // > 10^12 => Millisekunden, sonst Sekunden
-        return value > 1_000_000_000_000L
-            ? DateTimeOffset.FromUnixTimeMilliseconds(value)
-            : DateTimeOffset.FromUnixTimeSeconds(value);
+        // the magnitude tells the unit: s ≈ 1.7e9, ms ≈ 1.7e12, µs ≈ 1.7e15, ns ≈ 1.7e18.
+        // Clamped: one odd header must not throw and take the whole poll down with it.
+        var abs = value == long.MinValue ? long.MaxValue : Math.Abs(value); // Math.Abs(MinValue) throws
+        var ms = abs > 100_000_000_000_000_000L ? value / 1_000_000
+            : abs > 100_000_000_000_000L ? value / 1000
+            : abs > 1_000_000_000_000L ? value
+            : value * 1000;
+        const long maxMs = 253_402_300_799_999L; // 9999-12-31
+        return DateTimeOffset.FromUnixTimeMilliseconds(Math.Clamp(ms, -62_135_596_800_000L, maxMs));
     }
 }
 

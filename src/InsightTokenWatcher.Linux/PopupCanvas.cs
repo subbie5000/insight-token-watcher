@@ -25,8 +25,8 @@ internal sealed class PopupCanvas : Control
     private const string ShortColumn = "5 h";
     private const string LongColumn = "Woche";
 
-    private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header }
-    private enum RowState { Ok, Warn, Crit, Error, Stale }
+    private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header, SortName, SortShort, SortLong }
+    private enum RowState { Ok, Warn, Crit, Error, Stale, Pending }
 
     private readonly record struct Row(AccountView View, RowState State, double Y, double H, string Name, string Sub,
         List<(string text, IBrush brush)> Notes);
@@ -60,6 +60,22 @@ internal sealed class PopupCanvas : Control
     /// <summary>Fired after the user dragged the popup by its title band; argument is the new screen position.</summary>
     public event Action<PixelPoint>? PopupMoved;
 
+    /// <summary>Fired after a click on a column title changed the order (to persist it).</summary>
+    public event Action<SortColumn, bool>? SortChanged;
+
+    /// <summary>Current order (click on KONTO / 5 H / WOCHE cycles ascending → descending → default).</summary>
+    public SortColumn SortBy { get; private set; }
+    public bool SortDescending { get; private set; }
+
+    private IReadOnlyList<AccountView> _views = Array.Empty<AccountView>();
+
+    public void SetSort(SortColumn column, bool descending)
+    {
+        SortBy = column;
+        SortDescending = column != SortColumn.None && descending;
+        SetData(_views);
+    }
+
     private DateTimeOffset _now = DateTimeOffset.Now;
     public DateTimeOffset Now { get => _now; set { _now = value; InvalidateVisual(); } }
 
@@ -86,15 +102,19 @@ internal sealed class PopupCanvas : Control
 
     public void SetData(IReadOnlyList<AccountView> views)
     {
+        _views = views;
         _now = DateTimeOffset.Now;
+        var hovered = _hoverRow >= 0 && _hoverRow < _rows.Count ? _rows[_hoverRow].View.Config.Id : (Guid?)null;
         _rows.Clear();
         var y = 0.0;
-        foreach (var v in views)
+        foreach (var v in AccountSort.Apply(views, SortBy, SortDescending, DateTimeOffset.UtcNow))
         {
             var (state, name, sub, error) = Classify(v);
             var notes = new List<(string text, IBrush brush)>();
-            foreach (var line in WarnLines(v, state))
-                notes.Add((line.text, line.crit ? Ui.CritBrush : Ui.WarnBrush));
+            // stale values raise no alarms (as on Windows) – the stale note explains them instead
+            if (state != RowState.Stale)
+                foreach (var line in WarnLines(v, state))
+                    notes.Add((line.text, line.crit ? Ui.CritBrush : Ui.WarnBrush));
             if (v.Display is { } d)
             {
                 foreach (var w in d.Windows.Where(w => w.IsBalance && !string.IsNullOrEmpty(w.Note)))
@@ -103,7 +123,10 @@ internal sealed class PopupCanvas : Control
                     notes.Add((w.Note!, Ui.FaintBrush));
             }
             if (error is not null)
-                notes.Add((error, Ui.CritBrush));
+                notes.Add((error, state != RowState.Stale ? Ui.CritBrush
+                    : v.Failure == FailureKind.AuthExpired ? Ui.MutedBrush
+                    : v.Failure == FailureKind.Network ? Ui.WarnBrush
+                    : Ui.CritBrush));
             var h = RowBase + notes.Count * LineH;
             if (v.PrimarySeries.Count >= 2) h += SparkH;
             _rows.Add(new Row(v, state, y, h, name, sub, notes));
@@ -112,6 +135,14 @@ internal sealed class PopupCanvas : Control
         _contentH = (int)((_rows.Count == 0 ? 84 : y + BodyPadTop + BodyPadBottom));
         _scroll = Math.Min(_scroll, MaxScroll(BodyRect(Bounds.Size).Height));
         _scrollTarget = _scroll;
+        // a sorted order can move another account under the resting mouse
+        if (_hover == Zone.Row)
+        {
+            _hover = HitTest(_lastMouse, out var row);
+            _hoverRow = _hover == Zone.Row ? row : -1;
+            var now = _hoverRow >= 0 ? _rows[_hoverRow].View.Config.Id : (Guid?)null;
+            if (now != hovered) { _tipText = ""; _tipTimer.Stop(); }
+        }
         _repaint.Start();
         InvalidateVisual();
     }
@@ -130,8 +161,21 @@ internal sealed class PopupCanvas : Control
         if (v.Snapshot is { Ok: false } && v.LastGood is null)
             return (RowState.Error, v.Config.Name, providerSub, ShortError(v.Snapshot.Error));
         if (v.IsStale)
-            return (RowState.Stale, v.Config.Name, providerSub,
-                $"Token abgelaufen – letzte Werte von {v.LastGood!.AtUtc.ToLocalTime():HH:mm}");
+        {
+            // same wording as Windows – before, every stale case (also plain network outages)
+            // read "Token abgelaufen"
+            var at = v.LastGood!.AtUtc.ToLocalTime();
+            var why = v.Failure switch
+            {
+                FailureKind.AuthExpired => $"Token abgelaufen – letzte Werte von {at:HH:mm}",
+                FailureKind.Network => $"Keine Verbindung – letzte Werte von {at:HH:mm}",
+                _ => $"Abfrage fehlgeschlagen ({ShortError(v.Snapshot?.Error)}) – Werte von {at:HH:mm}"
+            };
+            return (RowState.Stale, v.Config.Name, providerSub, why);
+        }
+        // no result yet: not "OK" (the summary used to count waiting accounts as OK)
+        if (v.Display is null)
+            return (RowState.Pending, v.Config.Name, providerSub, null);
         var windows = v.Display?.Windows ?? new List<QuotaWindow>();
         var maxFrac = windows.Where(w => !w.IsInfoOnly).Select(w => w.UsedFraction ?? 0).DefaultIfEmpty(0).Max();
         var state = v.Health switch
@@ -228,6 +272,11 @@ internal sealed class PopupCanvas : Control
         if (settings.Contains(p)) return Zone.Settings;
 
         var body = BodyRect(Bounds.Size);
+        if (p.Y >= TitleH && p.Y < HeaderH) // column titles: click sorts
+        {
+            if (p.X < CellsX - CellGap / 2) return Zone.SortName;
+            return p.X < CellsX + CellWidth(Bounds.Width) + CellGap / 2 ? Zone.SortShort : Zone.SortLong;
+        }
         if (!body.Contains(p)) return p.Y < HeaderH ? Zone.Header : Zone.None;
         if (MaxScroll(body.Height) > 0 && p.X >= body.Right - 14) return Zone.Scrollbar;
 
@@ -347,10 +396,51 @@ internal sealed class PopupCanvas : Control
     {
         var ty = TitleH + 5;
         var cw = CellWidth(w);
-        Tl(g, "KONTO", Ui.FCaps, Ui.FaintBrush, NameWidth, 15, FontWeight.SemiBold, new Point(NameX, ty));
-        Tl(g, ShortColumn.ToUpperInvariant(), Ui.FCaps, Ui.FaintBrush, cw, 15, FontWeight.SemiBold, new Point(CellsX, ty));
-        Tl(g, LongColumn.ToUpperInvariant(), Ui.FCaps, Ui.FaintBrush, cw, 15, FontWeight.SemiBold, new Point(CellsX + cw + CellGap, ty));
+        DrawColumnTitle(g, "KONTO", SortColumn.Name, Zone.SortName, new Rect(NameX, ty, NameWidth, 15));
+        DrawColumnTitle(g, ShortColumn.ToUpperInvariant(), SortColumn.Short, Zone.SortShort, new Rect(CellsX, ty, cw, 15));
+        DrawColumnTitle(g, LongColumn.ToUpperInvariant(), SortColumn.Long, Zone.SortLong,
+            new Rect(CellsX + cw + CellGap, ty, cw, 15));
         g.DrawLine(new Pen(new SolidColorBrush(Ui.Divider), 1), new Point(PadX, HeaderH), new Point(w - PadX, HeaderH));
+    }
+
+    /// <summary>Column title; the sort column gets a direction triangle (▲ ascending) and – if it
+    /// fits – what the order means ("zuerst leer", "A–Z"). Same rule as Windows.</summary>
+    private void DrawColumnTitle(DrawingContext g, string title, SortColumn column, Zone zone, Rect r)
+    {
+        var active = SortBy == column;
+        var brush = active ? Ui.TextBrush : _hover == zone ? Ui.MutedBrush : Ui.FaintBrush;
+        var tl = new TextLayout(title, new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.SemiBold),
+            Ui.FCaps, brush, maxWidth: r.Width, maxHeight: r.Height);
+        tl.Draw(g, r.Position);
+        if (!active) return;
+
+        var x = r.X + tl.Width + 6;
+        double tw = 8, th = 5, mid = r.Y + 7;
+        var tri = new StreamGeometry();
+        using (var ctx = tri.Open())
+        {
+            if (SortDescending)
+            {
+                ctx.BeginFigure(new Point(x, mid - th / 2), true);
+                ctx.LineTo(new Point(x + tw, mid - th / 2));
+                ctx.LineTo(new Point(x + tw / 2, mid + th / 2));
+            }
+            else
+            {
+                ctx.BeginFigure(new Point(x, mid + th / 2), true);
+                ctx.LineTo(new Point(x + tw, mid + th / 2));
+                ctx.LineTo(new Point(x + tw / 2, mid - th / 2));
+            }
+            ctx.EndFigure(true);
+        }
+        g.DrawGeometry(Ui.OkBrush, null, tri);
+
+        var meaning = column == SortColumn.Name
+            ? SortDescending ? "Z–A" : "A–Z"
+            : SortDescending ? "zuletzt leer" : "zuerst leer";
+        var ml = new TextLayout(meaning, new Typeface(FontFamily.Default), Ui.FTiny, Ui.MutedBrush);
+        var sx = x + tw + 6;
+        if (sx + ml.Width <= r.Right) ml.Draw(g, new Point(sx, r.Y));
     }
 
     private void DrawRow(DrawingContext g, Row row, int idx, double top, double w, bool hover)
@@ -370,18 +460,25 @@ internal sealed class PopupCanvas : Control
         Tl(g, row.Name, Ui.FName, Ui.TextBrush, NameWidth, 18, FontWeight.SemiBold, new Point(NameX, nameY));
         Tl(g, row.Sub, Ui.FTiny, Ui.FaintBrush, NameWidth, 14, FontWeight.Normal, new Point(NameX, top + 31));
 
-        // cells
+        // cells – same column semantics as Windows (WindowLayout): short window (≤ 1 day) left,
+        // long window right, balances as amount | runway. Before, a weekly-only account showed
+        // its week under "5 H" and info-only accounts got a bar with "– verbraucht".
         var cw = CellWidth(w);
         var cellY = top + 9;
-        var windows = v.Display?.Windows ?? new List<QuotaWindow>();
-        var quotal = windows.Where(x => !x.IsBalance && !x.IsInfoOnly)
-            .OrderBy(x => x.WindowMinutes ?? double.MaxValue).ToList();
-        var cellA = quotal.Count > 0 ? quotal[0] : windows.FirstOrDefault();
-        var cellB = quotal.Count > 1 ? quotal[1] : (windows.Count > 1 ? windows[1] : (QuotaWindow?)null);
-        if (cellA is { IsBalance: true }) cellB = cellA; // runway in the right column
+        var layout = v.Display is { } snap ? WindowLayout.Classify(snap.Windows) : new RowLayout();
+        QuotaWindow? cellA, cellB;
+        if (layout.Span is { } span)
+        {
+            cellA = span;
+            cellB = span.IsBalance ? span : null; // runway in the right column
+        }
+        else
+        {
+            cellA = layout.Short;
+            cellB = layout.Long;
+        }
         DrawCell(g, cellA, v, new Rect(CellsX, cellY, cw, 34), isRight: false);
-        if (cellB is not null)
-            DrawCell(g, cellB, v, new Rect(CellsX + cw + CellGap, cellY, cw, 34), isRight: true);
+        DrawCell(g, cellB, v, new Rect(CellsX + cw + CellGap, cellY, cw, 34), isRight: true);
 
         var y = top + RowBase;
         foreach (var (text, brush) in row.Notes)
@@ -403,22 +500,39 @@ internal sealed class PopupCanvas : Control
             return;
         }
         var x = r.X; var y = r.Y;
+        if (win.IsInfoOnly)
+        {
+            Tl(g, win.Remaining is null ? "–" : Formatting.Money(win.Remaining, win.Unit), Ui.FValue, Ui.TextBrush,
+                r.Width, 18, FontWeight.SemiBold, new Point(x, y));
+            Tl(g, win.Label, Ui.FTiny, Ui.FaintBrush, r.Width, 13, FontWeight.Normal, new Point(x, y + 19));
+            return;
+        }
         if (win.IsBalance)
         {
             v.Evals.TryGetValue(win.Key, out var ev);
             if (isRight)
             {
-                var runway = ev?.TimeToEmpty;
-                Tl(g, runway is { } tt ? Formatting.Span(tt) : "–",
-                    Ui.FBody, Ui.MutedBrush, r.Width, 18, FontWeight.SemiBold, new Point(x, y));
-                Tl(g, "Reichweite", Ui.FTiny, Ui.FaintBrush, r.Width, 13, FontWeight.Normal, new Point(x, y + 19));
+                // as on Windows: only a measured rate gives a runway, counted down live since the
+                // snapshot, coloured by the forecast (amber < 2 d, red < 12 h), grey when stale
+                string runway = "–";
+                IBrush runwayBrush = Ui.FaintBrush;
+                if (ev is { HasRate: true, TimeToEmpty: { } tte })
+                {
+                    var left = tte - (DateTimeOffset.UtcNow - (v.Display?.AtUtc ?? DateTimeOffset.UtcNow));
+                    runway = "~" + Formatting.Span(left < TimeSpan.Zero ? TimeSpan.Zero : left);
+                    runwayBrush = v.IsStale ? Ui.StaleBrush
+                        : ev.Health is Health.Warn or Health.Crit ? Ui.ForHealthBrush(ev.Health)
+                        : Ui.TextBrush;
+                }
+                Tl(g, runway, Ui.FBody, runwayBrush, r.Width, 18, FontWeight.SemiBold, new Point(x, y));
+                Tl(g, ev is { HasRate: true } ? "Reichweite" : "kein Verbrauch gemessen", Ui.FTiny, Ui.FaintBrush,
+                    r.Width, 13, FontWeight.Normal, new Point(x, y + 19));
             }
             else
             {
-                Tl(g, Formatting.Money(win.Remaining, win.Unit), Ui.FValue, Ui.TextBrush, r.Width, 18,
-                    FontWeight.SemiBold, new Point(x, y));
-                Tl(g, win.Unit == "USD" ? "Guthaben" : "Guthaben", Ui.FTiny, Ui.FaintBrush, r.Width, 13,
-                    FontWeight.Normal, new Point(x, y + 19));
+                Tl(g, Formatting.Money(win.Remaining, win.Unit), Ui.FValue, v.IsStale ? Ui.StaleBrush : Ui.TextBrush,
+                    r.Width, 18, FontWeight.SemiBold, new Point(x, y));
+                Tl(g, "Guthaben", Ui.FTiny, Ui.FaintBrush, r.Width, 13, FontWeight.Normal, new Point(x, y + 19));
             }
             return;
         }
@@ -426,14 +540,15 @@ internal sealed class PopupCanvas : Control
         var frac = win.UsedFraction ?? 0;
         // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
         // lime = unused (0 %) – forecast health no longer drives the bar colour
-        var color = frac >= 0.999 ? Ui.Crit : frac > 0 ? Ui.Warn : Ui.Ok;
+        // stale (last good) values are grey, as on Windows – they are not current
+        var color = v.IsStale ? Ui.Stale : frac >= 0.999 ? Ui.Crit : frac > 0 ? Ui.Warn : Ui.Ok;
         var hasTotal = win.Total is { } t && t > 0;
         var totalV = win.Total ?? 0;
         var remV = Math.Max(0, totalV - frac * totalV);
+        // always "noch …" (without it "61.2k von 140k" read like the consumed amount), as
+        // "noch X/Y" so large totals still fit the cell
         var label = hasTotal
-            ? totalV >= 10_000
-                ? $"{Compact(remV)} von {Compact(totalV)}"
-                : $"noch {Compact(remV)} von {Compact(totalV)}"
+            ? $"noch {Compact(remV)}/{Compact(totalV)}"
             : $"{Formatting.Percent(win.UsedFraction)} verbraucht";
         Tl(g, label, hasTotal ? Ui.FBody : Ui.FValue, new SolidColorBrush(color), r.Width, 18,
             FontWeight.SemiBold, new Point(x, y));
@@ -447,9 +562,10 @@ internal sealed class PopupCanvas : Control
         Tl(g, sub, Ui.FTiny, Ui.FaintBrush, r.Width, 13, FontWeight.Normal, new Point(x, barY + 8));
     }
 
-    /// <summary>Compact counts: 11 620 → "11,6k" so "noch X von Y" fits the cell.</summary>
+    /// <summary>Compact counts: 11 620 → "11,6k" (German decimals like everywhere else) so
+    /// "noch X von Y" fits the cell.</summary>
     private static string Compact(double v) => v >= 10_000
-        ? string.Create(CultureInfo.InvariantCulture, $"{v / 1000:0.#}k")
+        ? (v / 1000).ToString("0.#", CultureInfo.GetCultureInfo("de-DE")) + "k"
         : Formatting.Count(v);
 
     private static void DrawSparkline(DrawingContext g, IReadOnlyList<Sample> series, Rect r, Color color)
@@ -491,8 +607,14 @@ internal sealed class PopupCanvas : Control
         var area = new Rect(PadX, top, w - 2 * PadX, FooterH - 8);
         Tl(g, $"Stand {_now:HH:mm:ss}", Ui.FTiny, Ui.FaintBrush, area.Width, area.Height,
             FontWeight.Normal, area.Position);
-        var hint = Pinned ? "Angeheftet – Pin oder Tray-Icon zum Lösen" : "Klick = neu messen · Hover = Details";
-        var hintColor = Pinned ? Ui.Ok : Ui.Faint;
+        var hint = _hover switch
+        {
+            Zone.SortName => "Klick sortiert: A–Z → Z–A → Standard",
+            Zone.SortShort or Zone.SortLong => "Klick sortiert: zuerst leer → zuletzt leer → Standard",
+            _ when Pinned => "Angeheftet – Pin oder Tray-Icon zum Lösen",
+            _ => "Klick = neu messen · Spaltenkopf = sortieren"
+        };
+        var hintColor = Pinned && _hover is not (Zone.SortName or Zone.SortShort or Zone.SortLong) ? Ui.Ok : Ui.Faint;
         var tl = new TextLayout(hint, new Typeface(FontFamily.Default), Ui.FTiny, new SolidColorBrush(hintColor),
             textAlignment: TextAlignment.Right, textTrimming: TextTrimming.CharacterEllipsis,
             maxWidth: area.Width, maxHeight: area.Height);
@@ -615,7 +737,8 @@ internal sealed class PopupCanvas : Control
         _hoverRow = zone == Zone.Row ? row : -1;
         Cursor = zone switch
         {
-            Zone.Row or Zone.Refresh or Zone.Settings or Zone.Pin => new Cursor(StandardCursorType.Hand),
+            Zone.Row or Zone.Refresh or Zone.Settings or Zone.Pin or Zone.SortName or Zone.SortShort or Zone.SortLong
+                => new Cursor(StandardCursorType.Hand),
             Zone.Header => new Cursor(StandardCursorType.SizeAll),
             _ => new Cursor(StandardCursorType.Arrow)
         };
@@ -647,20 +770,45 @@ internal sealed class PopupCanvas : Control
             InvalidateVisual();
             return;
         }
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        // On release the button is no longer "pressed" (Avalonia reports the state after the
+        // event) – the old IsLeftButtonPressed check returned here on every click, so pin,
+        // refresh, settings and row clicks never fired on Linux.
+        if (e.InitialPressMouseButton != MouseButton.Left) return;
         var zone = HitTest(e.GetPosition(this), out var row);
-        if (zone != _pressed) return;
+        var pressed = _pressed;
         _pressed = Zone.None;
+        if (zone != pressed) return;
         switch (zone)
         {
             case Zone.Refresh: RefreshAllClicked?.Invoke(); break;
             case Zone.Settings: SettingsClicked?.Invoke(); break;
             case Zone.Pin: PinClicked?.Invoke(); break;
+            case Zone.SortName: ClickSort(SortColumn.Name); break;
+            case Zone.SortShort: ClickSort(SortColumn.Short); break;
+            case Zone.SortLong: ClickSort(SortColumn.Long); break;
             case Zone.Row when row == _pressedRow && row >= 0 && row < _rows.Count:
                 RowClicked?.Invoke(_rows[row].View.Config.Id);
                 break;
         }
     }
+
+    private void ClickSort(SortColumn column)
+    {
+        var (c, d) = AccountSort.Next(SortBy, SortDescending, column);
+        SetSort(c, d);
+        SortChanged?.Invoke(c, d);
+    }
+
+    /// <summary>Centre of a column title in canvas coordinates (render harness click test).</summary>
+    internal Point ColumnTitlePoint(SortColumn column) => column switch
+    {
+        SortColumn.Name => new Point(NameX + 20, TitleH + ColumnsH / 2),
+        SortColumn.Short => new Point(CellsX + 20, TitleH + ColumnsH / 2),
+        _ => new Point(CellsX + CellWidth(Bounds.Width) + CellGap + 20, TitleH + ColumnsH / 2)
+    };
+
+    /// <summary>Centre of the pin button in canvas coordinates (render harness click test).</summary>
+    internal Point PinButtonPoint() => HeaderButtons(Bounds.Width).pin.Center;
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {

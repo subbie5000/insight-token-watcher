@@ -73,7 +73,15 @@ kommen über `notify-send`, sofern installiert.
 - **Popup am Titel ziehen** → an beliebiger Stelle auf beliebigem Monitor parken
   (heftet automatisch an; Position bleibt über Neustarts erhalten).
 - **Klick auf ein Konto** im Popup → sofortige Neumessung.
-- **Farben**: lime = OK, amber = knapp, rot = kritisch/Fehler.
+- **Klick auf einen Spaltenkopf** sortiert: KONTO nach Name, 5 STUNDEN / WOCHE danach,
+  *welches Konto zuerst leer ist* (gesperrte und bald leere oben, dann die vollsten).
+  Zweiter Klick dreht die Reihenfolge um („zuletzt leer“), dritter Klick stellt den
+  Standard wieder her; die Wahl bleibt gespeichert.
+- **Zellfarben** nach Verbrauch: lime = unbenutzt, amber = in Benutzung, rot = Limit
+  erreicht, grau = veraltet. Ob ein Konto bis zum Reset reicht, sagen Prognosezeile und
+  Zeilenhintergrund (amber bei knapp, kritisch oder Fehler).
+- **Tray-Icon**: Ring mit der mittleren Wochenauslastung deiner Anthropic-Konten, Prozent
+  in der Mitte; ein Eckpunkt markiert Konten mit Problemen.
 - Pro Fenster: Balken + „verbraucht X %“, Prognosezeile
   („Noch 3 h 41 min · Reset in 2 h 14 min – reicht bis zum Reset“ bzw.
   „Leer in … – Reset erst in …!“) und ein 60-Minuten-Verlauf.

@@ -22,7 +22,7 @@ internal sealed class PopupCanvas : Control
     private const string ShortColumn = "5 h";
     private const string LongColumn = "Woche";
 
-    private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header }
+    private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header, SortName, SortShort, SortLong }
     private enum RowKind { Data, Loading, Error }
     private enum RowState { Ok, Warn, Crit, Error, Stale, Pending }
 
@@ -71,6 +71,22 @@ internal sealed class PopupCanvas : Control
     public event Action? PinClicked;
     public event Action<Guid>? RowClicked;
 
+    /// <summary>Fired after a click on a column title changed the order (to persist it).</summary>
+    public event Action<SortColumn, bool>? SortChanged;
+
+    /// <summary>Current order (click on KONTO / 5 STUNDEN / WOCHE cycles ascending → descending → default).</summary>
+    public SortColumn SortBy { get; private set; }
+    public bool SortDescending { get; private set; }
+
+    public void SetSort(SortColumn column, bool descending)
+    {
+        SortBy = column;
+        SortDescending = column != SortColumn.None && descending;
+        BuildRows();
+        SyncHoverAfterReorder(null);
+        Invalidate();
+    }
+
     private static int S(float v) => Theme.S(v);
 
     public PopupCanvas()
@@ -94,6 +110,7 @@ internal sealed class PopupCanvas : Control
 
     public void SetData(IReadOnlyList<AccountView> views)
     {
+        var hovered = HoveredAccount();
         _views = views;
         Stamp = DateTime.Now;
         BuildRows();
@@ -101,7 +118,22 @@ internal sealed class PopupCanvas : Control
         _scroll = Math.Clamp(_scroll, 0, max);
         _scrollTarget = Math.Clamp(_scrollTarget, 0, max);
         if (_hoverRow >= _rows.Count) _hoverRow = -1;
+        SyncHoverAfterReorder(hovered);
         Invalidate();
+    }
+
+    private Guid? HoveredAccount() =>
+        _hover == Zone.Row && _hoverRow >= 0 && _hoverRow < _rows.Count ? _rows[_hoverRow].View.Config.Id : null;
+
+    /// <summary>A sorted order can move another account under the resting mouse: re-hit-test, and
+    /// drop the tooltip if it would now describe a different account.</summary>
+    private void SyncHoverAfterReorder(Guid? before)
+    {
+        before ??= HoveredAccount();
+        if (_hover != Zone.Row || !IsHandleCreated) return;
+        _hover = HitTest(_lastMouse, out var row);
+        _hoverRow = _hover == Zone.Row ? row : -1;
+        if (HoveredAccount() != before) HideTip();
     }
 
     /// <summary>Jump to a scroll offset (render harness).</summary>
@@ -121,12 +153,15 @@ internal sealed class PopupCanvas : Control
 
     public string TooltipFor(int row) => row >= 0 && row < _rows.Count ? TooltipText(_rows[row]) : "";
 
+    /// <summary>Current row order (render harness).</summary>
+    internal IEnumerable<string> RowNames() => _rows.Select(r => r.View.Config.Name);
+
     private void BuildRows()
     {
         _rows.Clear();
         var y = 0;
         var now = DateTimeOffset.UtcNow;
-        foreach (var v in _views)
+        foreach (var v in AccountSort.Apply(_views, SortBy, SortDescending, now))
         {
             var row = new RowInfo { View = v, Display = v.Display };
             if (row.Display is null)
@@ -297,6 +332,11 @@ internal sealed class PopupCanvas : Control
         if (settings.Contains(p)) return Zone.Settings;
 
         var body = BodyRect(ClientSize);
+        if (p.Y >= S(TitleH) && p.Y < S(HeaderH)) // column titles: click sorts
+        {
+            if (p.X < CellsX - S(CellGap) / 2) return Zone.SortName;
+            return p.X < CellsX + CellWidth(ClientSize.Width) + S(CellGap) / 2 ? Zone.SortShort : Zone.SortLong;
+        }
         if (!body.Contains(p)) return p.Y < S(HeaderH) ? Zone.Header : Zone.None;
         if (MaxScroll(body.Height) > 0 && p.X >= body.Right - S(14)) return Zone.Scrollbar;
 
@@ -368,15 +408,15 @@ internal sealed class PopupCanvas : Control
         DrawButton(g, refresh, Theme.GlyphRefresh, "R", _hover == Zone.Refresh, Theme.Muted);
         DrawButton(g, settings, Theme.GlyphSettings, "S", _hover == Zone.Settings, Theme.Muted);
 
-        // column titles (sticky)
+        // column titles (sticky) – a click sorts by that column
         var cy = S(TitleH);
         using (var pen = new Pen(Theme.Divider))
             g.DrawLine(pen, S(PadX), cy, w - S(PadX), cy);
         var ty = cy + S(5);
         var cw = CellWidth(w);
-        Gfx.Text(g, "KONTO", Theme.FCaps, new Rectangle(NameX, ty, NameWidth, S(15)), Theme.Faint);
-        Gfx.Text(g, "5 STUNDEN", Theme.FCaps, new Rectangle(CellsX, ty, cw, S(15)), Theme.Faint);
-        Gfx.Text(g, "WOCHE", Theme.FCaps, new Rectangle(CellsX + cw + S(CellGap), ty, cw, S(15)), Theme.Faint);
+        DrawColumnTitle(g, "KONTO", SortColumn.Name, Zone.SortName, new Rectangle(NameX, ty, NameWidth, S(15)));
+        DrawColumnTitle(g, "5 STUNDEN", SortColumn.Short, Zone.SortShort, new Rectangle(CellsX, ty, cw, S(15)));
+        DrawColumnTitle(g, "WOCHE", SortColumn.Long, Zone.SortLong, new Rectangle(CellsX + cw + S(CellGap), ty, cw, S(15)));
 
         using (var pen = new Pen(Theme.Divider))
             g.DrawLine(pen, 0, hh - 1, w, hh - 1);
@@ -388,6 +428,33 @@ internal sealed class PopupCanvas : Control
             g.FillRectangle(lg, sr);
         }
     }
+
+    /// <summary>Column title. The sort column is highlighted with a direction triangle (▲ ascending)
+    /// and – if it fits – what the order means ("zuerst leer", "A–Z").</summary>
+    private void DrawColumnTitle(Graphics g, string title, SortColumn column, Zone zone, Rectangle r)
+    {
+        var active = SortBy == column;
+        Gfx.Text(g, title, Theme.FCaps, r, active ? Theme.Text : _hover == zone ? Theme.Muted : Theme.Faint);
+        if (!active) return;
+
+        var x = r.X + Gfx.Measure(g, title, Theme.FCaps) + S(6);
+        float tw = S(8), th = S(5), mid = r.Y + S(7);
+        PointF[] tri = SortDescending
+            ? new[] { new PointF(x, mid - th / 2), new PointF(x + tw, mid - th / 2), new PointF(x + tw / 2, mid + th / 2) }
+            : new[] { new PointF(x, mid + th / 2), new PointF(x + tw, mid + th / 2), new PointF(x + tw / 2, mid - th / 2) };
+        using (var b = new SolidBrush(Theme.Ok))
+            g.FillPolygon(b, tri);
+
+        var meaning = SortMeaning(column, SortDescending);
+        var sx = (int)(x + tw) + S(6);
+        var sw = Gfx.Measure(g, meaning, Theme.FTiny);
+        if (sx + sw <= r.Right)
+            Gfx.Text(g, meaning, Theme.FTiny, new Rectangle(sx, r.Y, sw + S(2), r.Height), Theme.Muted);
+    }
+
+    private static string SortMeaning(SortColumn column, bool descending) => column == SortColumn.Name
+        ? descending ? "Z–A" : "A–Z"
+        : descending ? "zuletzt leer" : "zuerst leer";
 
     private void DrawSummary(Graphics g, int x, int y)
     {
@@ -442,9 +509,15 @@ internal sealed class PopupCanvas : Control
 
         var area = new Rectangle(S(PadX), top, w - 2 * S(PadX), fh);
         Gfx.Text(g, $"Stand {Stamp:HH:mm:ss}", Theme.FTiny, area, Theme.Faint, TextFormatFlags.VerticalCenter);
-        var hint = Pinned ? "Angeheftet – Pin oder Tray-Icon zum Lösen" : "Titel ziehen = parken · Hover = Details";
-        Gfx.Text(g, hint, Theme.FTiny, area, Pinned ? Theme.Ok : Theme.Faint,
-            TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+        var hint = _hover switch
+        {
+            Zone.SortName => "Klick sortiert: A–Z → Z–A → Standard",
+            Zone.SortShort or Zone.SortLong => "Klick sortiert: zuerst leer → zuletzt leer → Standard",
+            _ when Pinned => "Angeheftet – Pin oder Tray-Icon zum Lösen",
+            _ => "Titel ziehen = parken · Spaltenkopf = sortieren"
+        };
+        var hintColor = Pinned && _hover is not (Zone.SortName or Zone.SortShort or Zone.SortLong) ? Theme.Ok : Theme.Faint;
+        Gfx.Text(g, hint, Theme.FTiny, area, hintColor, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
     }
 
     private void DrawScrollbar(Graphics g, Rectangle body)
@@ -841,7 +914,8 @@ internal sealed class PopupCanvas : Control
         _hoverRow = zone == Zone.Row ? row : -1;
         Cursor = zone switch
         {
-            Zone.Row or Zone.Refresh or Zone.Settings or Zone.Pin => Cursors.Hand,
+            Zone.Row or Zone.Refresh or Zone.Settings or Zone.Pin or Zone.SortName or Zone.SortShort or Zone.SortLong
+                => Cursors.Hand,
             Zone.Header => Cursors.SizeAll,
             _ => Cursors.Default
         };
@@ -884,10 +958,42 @@ internal sealed class PopupCanvas : Control
             case Zone.Refresh: RefreshAllClicked?.Invoke(); break;
             case Zone.Settings: SettingsClicked?.Invoke(); break;
             case Zone.Pin: PinClicked?.Invoke(); break;
+            case Zone.SortName: ClickSort(SortColumn.Name); break;
+            case Zone.SortShort: ClickSort(SortColumn.Short); break;
+            case Zone.SortLong: ClickSort(SortColumn.Long); break;
             case Zone.Row when row == _pressedRow && row >= 0 && row < _rows.Count:
                 RowClicked?.Invoke(_rows[row].View.Config.Id);
                 break;
         }
+    }
+
+    private void ClickSort(SortColumn column)
+    {
+        var (c, d) = AccountSort.Next(SortBy, SortDescending, column);
+        SetSort(c, d);
+        SortChanged?.Invoke(c, d);
+    }
+
+    /// <summary>Click at a client point (render harness – exercises the real mouse path).</summary>
+    internal void SimulateClick(Point p)
+    {
+        var args = new MouseEventArgs(MouseButtons.Left, 1, p.X, p.Y, 0);
+        OnMouseMove(new MouseEventArgs(MouseButtons.None, 0, p.X, p.Y, 0));
+        OnMouseDown(args);
+        OnMouseUp(args);
+    }
+
+    /// <summary>Centre of a column title (render harness).</summary>
+    internal Point ColumnTitlePoint(SortColumn column)
+    {
+        var w = ClientSize.Width;
+        var y = S(TitleH) + S(ColumnsH) / 2;
+        return column switch
+        {
+            SortColumn.Name => new Point(NameX + S(20), y),
+            SortColumn.Short => new Point(CellsX + S(20), y),
+            _ => new Point(CellsX + CellWidth(w) + S(CellGap) + S(20), y)
+        };
     }
 
     protected override void OnMouseLeave(EventArgs e)

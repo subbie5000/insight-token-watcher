@@ -1,0 +1,9 @@
+<Project>
+  <!-- Published binaries must not carry the local build path (/home/<user>/…, C:\Users\…):
+       deterministic source paths map the repo root to /_/ in PDBs, SourceLink and the PE
+       debug directory. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
+  </PropertyGroup>
+</Project>

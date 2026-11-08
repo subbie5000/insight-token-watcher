@@ -46,6 +46,25 @@ internal static class RenderHarness
         Save(canvas, full, Path.Combine(outDir, "popup_hover.png"));
         File.WriteAllText(Path.Combine(outDir, "tooltip.txt"), canvas.TooltipFor(1));
 
+        // sorting through the real mouse path: WOCHE asc → desc → default, then KONTO
+        canvas.ResetHover();
+        var sorts = new List<string>();
+        canvas.SortChanged += (c, d) => sorts.Add(c == SortColumn.None ? "None" : $"{c}-{(d ? "desc" : "asc")}");
+        canvas.SimulateClick(canvas.ColumnTitlePoint(SortColumn.Long));
+        Save(canvas, full, Path.Combine(outDir, "popup_sorted_week.png"));
+        report.AppendLine("week asc:  " + string.Join(" | ", canvas.RowNames()));
+        canvas.SimulateClick(canvas.ColumnTitlePoint(SortColumn.Long));
+        Save(canvas, full, Path.Combine(outDir, "popup_sorted_week_desc.png"));
+        report.AppendLine("week desc: " + string.Join(" | ", canvas.RowNames()));
+        canvas.SimulateClick(canvas.ColumnTitlePoint(SortColumn.Long));
+        report.AppendLine("default:   " + string.Join(" | ", canvas.RowNames()));
+        canvas.SimulateClick(canvas.ColumnTitlePoint(SortColumn.Name));
+        report.AppendLine("name asc:  " + string.Join(" | ", canvas.RowNames()));
+        canvas.SimulateClick(canvas.ColumnTitlePoint(SortColumn.Short));
+        report.AppendLine("5h asc:    " + string.Join(" | ", canvas.RowNames()));
+        report.AppendLine($"clicks: [{string.Join(", ", sorts)}] (expect Long-asc, Long-desc, None, Name-asc, Short-asc)");
+        canvas.SetSort(SortColumn.None, false);
+
         SaveIcons(Path.Combine(outDir, "icons.png"));
         File.WriteAllText(Path.Combine(outDir, "report.txt"), report.ToString());
         return 0;

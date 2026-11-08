@@ -28,9 +28,7 @@ public sealed class GenericOpenAiPoller : IAccountPoller
             }), Encoding.UTF8, "application/json");
 
         using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-        var headers = resp.Headers
-            .Concat(resp.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
-            .ToDictionary(h => h.Key.ToLowerInvariant(), h => h.Value.FirstOrDefault() ?? "");
+        var headers = ProviderInfo.HeaderMap(resp);
 
         return ParseHeaders(cfg.Id, headers, (int)resp.StatusCode,
             resp.Content is null ? "" : await resp.Content.ReadAsStringAsync(ct));
@@ -86,15 +84,16 @@ public sealed class GenericOpenAiPoller : IAccountPoller
         var dto = TimeParsing.ParseFlexible(raw);
         if (dto is not null) return dto;
 
-        // duration strings: "6m0s", "1h30m", "90s", "1.5s"
-        var m = System.Text.RegularExpressions.Regex.Matches(raw, @"(\d+(?:\.\d+)?)(h|m|s)");
+        // duration strings: "6m0s", "1h30m", "90s", "1.5s", "20ms" – "ms" must win over "m",
+        // otherwise "20ms" read as 20 minutes
+        var m = System.Text.RegularExpressions.Regex.Matches(raw, @"(\d+(?:\.\d+)?)(ms|h|m|s)");
         if (m.Count > 0)
         {
             double seconds = 0;
             foreach (System.Text.RegularExpressions.Match match in m)
             {
                 var v = double.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-                seconds += match.Groups[2].Value switch { "h" => v * 3600, "m" => v * 60, _ => v };
+                seconds += match.Groups[2].Value switch { "h" => v * 3600, "m" => v * 60, "ms" => v / 1000, _ => v };
             }
             if (seconds > 0) return now.AddSeconds(seconds);
         }

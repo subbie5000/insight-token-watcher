@@ -42,7 +42,7 @@ public sealed class PlainAccountFile
 
         if (!TryParseProvider(dto.Provider, out var prov))
             return (null!, "", $"{dto.Name}: unbekannter provider '{dto.Provider}' " +
-                               "(anthropic|kimicode|moonshot|zai|deepseek)");
+                               $"({string.Join("|", Enum.GetNames<ProviderKind>().Select(n => n.ToLowerInvariant()))})");
 
         var auth = AuthKind.ApiKeyHeader;
         if (!string.IsNullOrWhiteSpace(dto.Auth))
@@ -62,26 +62,33 @@ public sealed class PlainAccountFile
             Auth = prov == ProviderKind.Anthropic ? auth : AuthKind.Bearer,
             BaseUrlOverride = string.IsNullOrWhiteSpace(dto.BaseUrlOverride) ? null : dto.BaseUrlOverride.Trim(),
             Model = dto.Model?.Trim() ?? "",
-            PollSeconds = dto.PollSeconds is > 0 ? dto.PollSeconds.Value : 60,
+            PollSeconds = dto.PollSeconds is > 0 ? dto.PollSeconds.Value : ProviderInfo.DefaultPollSeconds(prov),
             Enabled = dto.Enabled ?? true,
             ExternalId = string.IsNullOrWhiteSpace(dto.ExternalId) ? null : dto.ExternalId.Trim()
         }, dto.ApiKey.Trim(), null);
     }
 
-    private static bool TryParseProvider(string s, out ProviderKind kind)
+    /// <summary>Aliases plus every <see cref="ProviderKind"/> name. Groq, Together and Cerebras used
+    /// to land on the generic kind (no default URL), Mistral/xAI/Gemini/Perplexity were rejected.</summary>
+    internal static bool TryParseProvider(string s, out ProviderKind kind)
     {
-        switch (s.Trim().ToLowerInvariant().Replace("-", "").Replace("_", "").Replace(" ", ""))
+        var key = s.Trim().ToLowerInvariant().Replace("-", "").Replace("_", "").Replace(" ", "").Replace(".", "");
+        switch (key)
         {
-            case "anthropic": kind = ProviderKind.Anthropic; return true;
-            case "kimicode" or "kimi": kind = ProviderKind.KimiCode; return true;
-            case "moonshot" or "moonshotbalance" or "kimibalance": kind = ProviderKind.Moonshot; return true;
-            case "zai" or "glm" or "bigmodel" or "zhipu": kind = ProviderKind.Zai; return true;
-            case "deepseek": kind = ProviderKind.DeepSeek; return true;
-            case "openai": kind = ProviderKind.OpenAi; return true;
-            case "openrouter": kind = ProviderKind.OpenRouter; return true;
-            case "genericopenai" or "openaikompatibel" or "openaicompatible" or "groq" or "together" or "cerebras":
-                kind = ProviderKind.GenericOpenAi; return true;
-            default: kind = default; return false;
+            case "kimi": kind = ProviderKind.KimiCode; return true;
+            case "moonshotbalance" or "kimibalance": kind = ProviderKind.Moonshot; return true;
+            case "glm" or "bigmodel" or "zhipu": kind = ProviderKind.Zai; return true;
+            case "openaikompatibel" or "openaicompatible" or "generic": kind = ProviderKind.GenericOpenAi; return true;
+            case "grok": kind = ProviderKind.Xai; return true;
+            case "google": kind = ProviderKind.Gemini; return true;
         }
+        foreach (var k in Enum.GetValues<ProviderKind>())
+            if (k.ToString().Equals(key, StringComparison.OrdinalIgnoreCase))
+            {
+                kind = k;
+                return true;
+            }
+        kind = default;
+        return false;
     }
 }
