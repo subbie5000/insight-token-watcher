@@ -79,6 +79,11 @@ public sealed class QuotaWindow
     /// <summary>Window length in minutes (300 = 5 h, 10080 = week); null = unknown.</summary>
     public double? WindowMinutes { get; set; }
 
+    /// <summary>Balance only: it cannot pay for requests right now – the provider says so
+    /// (DeepSeek "is_available": false) or a prepaid balance is used up. Set by the poller,
+    /// which knows whether an empty balance stops the account.</summary>
+    public bool Unusable { get; set; }
+
     /// <summary>Set when the limit only applies to one model family (e.g. "Fable"): such a window
     /// has its own column and does not decide whether the account as a whole is usable.</summary>
     public string? Scope { get; set; }

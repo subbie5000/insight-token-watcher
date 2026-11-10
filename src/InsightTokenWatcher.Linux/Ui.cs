@@ -21,6 +21,12 @@ internal static class Ui
     public static readonly Color Crit = Color.FromRgb(240, 82, 82);
     public static readonly Color Unknown = Color.FromRgb(110, 118, 130);
 
+    // Text on a tinted card (problem rows). Such a card is lighter than a neutral one, so the
+    // dim tones lose contrast there (grey 3.5:1, red 3.7:1) – brighter ones, as on Windows.
+    public static readonly Color FaintOnTint = Color.FromRgb(179, 186, 198);
+    public static readonly Color StaleOnTint = Color.FromRgb(160, 167, 180);
+    public static readonly Color CritOnTint = Color.FromRgb(255, 145, 139);
+
     public static readonly IBrush BgBrush = new SolidColorBrush(Bg);
     public static readonly IBrush CardBrush = new SolidColorBrush(Card);
     public static readonly IBrush ButtonHoverBrush = new SolidColorBrush(ButtonHover);
@@ -31,12 +37,16 @@ internal static class Ui
     public static readonly IBrush OkBrush = new SolidColorBrush(Ok);
     public static readonly IBrush WarnBrush = new SolidColorBrush(Warn);
     public static readonly IBrush CritBrush = new SolidColorBrush(Crit);
-    public static readonly IBrush UnknownBrush = new SolidColorBrush(Unknown);
+    public static readonly IBrush FaintOnTintBrush = new SolidColorBrush(FaintOnTint);
+    public static readonly IBrush StaleOnTintBrush = new SolidColorBrush(StaleOnTint);
+    public static readonly IBrush CritOnTintBrush = new SolidColorBrush(CritOnTint);
 
     // row cards (same values as the Windows Theme)
     public static readonly IBrush TrackOnCardBrush = new SolidColorBrush(Color.FromRgb(58, 63, 75));
     public static readonly IBrush TintStrongBrush = new SolidColorBrush(Color.FromArgb(30, Warn.R, Warn.G, Warn.B));
     public static readonly IBrush TintSoftBrush = new SolidColorBrush(Color.FromArgb(20, Warn.R, Warn.G, Warn.B));
+    public static readonly IBrush TintBlockedBrush = new SolidColorBrush(Color.FromArgb(40, Crit.R, Crit.G, Crit.B)); // cannot be used right now
+    public static readonly IPen SectionPen = new Pen(new SolidColorBrush(CardBorder), 1);
     public static readonly IBrush HoverOverlayBrush = new SolidColorBrush(Color.FromArgb(14, 255, 255, 255));
     public static readonly IBrush TipBrush = new SolidColorBrush(Color.FromRgb(36, 40, 49));
     public static readonly IPen TipBorderPen = new Pen(new SolidColorBrush(CardBorder), 1);
@@ -50,14 +60,6 @@ internal static class Ui
         Health.Warn => Warn,
         Health.Crit => Crit,
         _ => Unknown
-    };
-
-    public static IBrush ForHealthBrush(Health h) => h switch
-    {
-        Health.Ok => OkBrush,
-        Health.Warn => WarnBrush,
-        Health.Crit => CritBrush,
-        _ => UnknownBrush
     };
 
     // Fonts

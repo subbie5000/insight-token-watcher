@@ -43,14 +43,6 @@ internal static class Theme
     public static Color PWarn => GlassPalette ? GlassText.Warn : Warn;
     public static Color PCrit => GlassPalette ? GlassText.Crit : Crit;
 
-    public static Color PForHealth(Health h) => h switch
-    {
-        Health.Ok => Ok,
-        Health.Warn => PWarn,
-        Health.Crit => PCrit,
-        _ => Unknown
-    };
-
     public static string HealthLabel(Health h) => h switch
     {
         Health.Ok => "OK",

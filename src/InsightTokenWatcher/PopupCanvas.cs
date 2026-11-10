@@ -17,7 +17,7 @@ internal sealed class PopupCanvas : Control
     public float LogicalWidth => _modelScope is null ? 480 : 560;
 
     private const float TitleH = 58, LegendH = 19, ColumnsH = 26, FooterH = 28;
-    private const float RowBase = 48, RowGap = 4, VerdictH = 20, ExtraH = 20;
+    private const float RowBase = 48, RowGap = 4, VerdictH = 20, ExtraH = 20, SectionH = 22;
     private const float OuterX = 8, CardPadX = 12, NameW = 128, NameGap = 12, CellGap = 16, ModelW = 92;
     private const float BodyPadTop = 0, BodyPadBottom = 8, ButtonSize = 28;
 
@@ -26,7 +26,9 @@ internal sealed class PopupCanvas : Control
 
     private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header, SortName, SortShort, SortLong, SortModel }
     private enum RowKind { Data, Loading, Error }
-    private enum RowState { Ok, Warn, Crit, Error, Stale, Pending }
+    // Crit = runs dry before its reset (a forecast, the account still works);
+    // Blocked = cannot be used right now (Usability.Blocked)
+    private enum RowState { Ok, Warn, Crit, Blocked, Error, Stale, Pending }
 
     private sealed class RowInfo
     {
@@ -35,6 +37,25 @@ internal sealed class PopupCanvas : Control
         public AccountSnapshot? Display;
         public RowKind Kind;
         public RowState State;
+        public Block? Block;
+
+        /// <summary>Overlay on the card: red = cannot be used right now, amber = a forecast or an
+        /// error (stronger the more urgent), none = nothing to report.</summary>
+        public Color Tint => State switch
+        {
+            RowState.Blocked => TintBlocked,
+            RowState.Crit or RowState.Error => TintStrong,
+            RowState.Warn => TintSoft,
+            _ => Color.Empty
+        };
+        public bool Tinted => !Tint.IsEmpty;
+
+        // Text tones on this row's card. A tinted card is lighter than a neutral one, so the dim
+        // tones of the opaque palette lose contrast there (grey 3.5:1, red 3.7:1): tinted cards
+        // take the brighter tones of the glass palette. On glass both are the same anyway.
+        public Color Faint => Tinted ? GlassText.Faint : Theme.PFaint;
+        public Color Old => Tinted ? GlassText.Stale : Theme.PStale;
+        public Color Crit => Tinted ? GlassText.Crit : Theme.PCrit;
         public bool Stale;
         public string StatusText = "";
         public Color StatusColor;
@@ -46,6 +67,7 @@ internal sealed class PopupCanvas : Control
     private IReadOnlyList<AccountView> _views = Array.Empty<AccountView>();
     private string? _modelScope;   // model family of the third column ("Fable"); null = no such column
     private bool _hasPace;         // a bar carries a pace tick → the legend row is shown
+    private int _sectionY = -1;    // caption above the blocked accounts (content coordinates); -1 = none
 
     /// <summary>Title, summary and – with pace ticks – the legend; the column titles follow.</summary>
     private float TitleBandH => TitleH + (_hasPace ? LegendH : 0);
@@ -170,12 +192,13 @@ internal sealed class PopupCanvas : Control
     private void BuildRows()
     {
         _rows.Clear();
+        _sectionY = -1;
         var y = 0;
         var now = DateTimeOffset.UtcNow;
         _modelScope = WindowLayout.ColumnScope(_views);
         foreach (var v in AccountSort.Apply(_views, SortBy, SortDescending, now))
         {
-            var row = new RowInfo { View = v, Display = v.Display };
+            var row = new RowInfo { View = v, Display = v.Display, Block = Usability.Blocked(v, now) };
             if (row.Display is null)
             {
                 row.Kind = v.Snapshot is { Ok: false } ? RowKind.Error : RowKind.Loading;
@@ -188,6 +211,13 @@ internal sealed class PopupCanvas : Control
             }
             DescribeStatus(v, row);
             row.HasVerdict = row.Kind == RowKind.Data && VerdictFor(row, now) is not null;
+
+            // the sort puts the blocked accounts last: a caption sets them apart
+            if (row.State == RowState.Blocked && _sectionY < 0)
+            {
+                _sectionY = y;
+                y += S(SectionH);
+            }
 
             var h = S(RowBase);
             if (row.Kind == RowKind.Data)
@@ -213,6 +243,8 @@ internal sealed class PopupCanvas : Control
         {
             RowKind.Error => RowState.Error,
             RowKind.Loading => RowState.Pending,
+            // a limit that was reached stays reached, even when the latest poll failed
+            _ when row.Block is not null => RowState.Blocked,
             _ when row.Stale => v.Failure == FailureKind.AuthExpired ||
                                 (v.Failure == FailureKind.Network && v.Health != Health.Crit)
                 ? RowState.Stale
@@ -227,14 +259,17 @@ internal sealed class PopupCanvas : Control
         };
         // a healthy row stays quiet: what kind of account it is, in grey. Only exceptions get a
         // coloured word – and a model limit names itself ("FABLE LEER") instead of "KNAPP".
+        // Colour rule (10.11.2026): red means "cannot be used right now"; everything that is
+        // a forecast – tight, runs dry before its reset – is amber.
         (row.StatusText, row.StatusColor) = row.State switch
         {
             RowState.Ok => (WindowLayout.Subline(v.Config, row.Layout), Theme.PFaint),
             RowState.Warn => (WindowLayout.ModelLimitBehind(v) is { } limit
                 ? WindowLayout.ModelLimitStatus(limit)
                 : "KNAPP", Theme.PWarn),
-            RowState.Crit => ("KRITISCH", Theme.PCrit),
-            RowState.Error => ("FEHLER", Theme.PCrit),
+            RowState.Crit => ("LÄUFT LEER", Theme.PWarn),
+            RowState.Blocked => ("GESPERRT", row.Crit),
+            RowState.Error => ("FEHLER", row.Crit),
             RowState.Stale => v.Failure == FailureKind.AuthExpired
                 ? ("Token abgelaufen", Theme.PMuted)
                 : ("offline", Theme.PWarn),
@@ -259,8 +294,17 @@ internal sealed class PopupCanvas : Control
             {
                 FailureKind.AuthExpired => ($"Token abgelaufen – letzte Werte von {at:HH:mm}", Theme.PMuted),
                 FailureKind.Network => ($"Keine Verbindung – letzte Werte von {at:HH:mm}", Theme.PWarn),
-                _ => ($"Abfrage fehlgeschlagen ({ShortError(v.Snapshot?.Error)}) – Werte von {at:HH:mm}", Theme.PCrit)
+                _ => ($"Abfrage fehlgeschlagen ({ShortError(v.Snapshot?.Error)}) – Werte von {at:HH:mm}", row.Crit)
             };
+        }
+
+        // a blocked account says what blocks it and until when (an unusable balance explains
+        // itself in its cells)
+        if (row.Block is { Window: { IsBalance: false } blocking })
+        {
+            v.Evals.TryGetValue(blocking.Key, out var blockEval);
+            return ($"{WindowLayout.ShortLabel(blocking)}: " +
+                    LiveVerdict(blocking, blockEval ?? new WindowEvaluation(), display.AtUtc, now), row.Crit);
         }
 
         // The line explains the row's status, which follows the general windows. A model limit
@@ -284,7 +328,7 @@ internal sealed class PopupCanvas : Control
         if (worst is null || worstWin is null) return null;
         var text = LiveVerdict(worstWin, worst, display.AtUtc, now);
         var label = worstWin.IsBalance ? "Guthaben" : WindowLayout.ShortLabel(worstWin);
-        return ($"{label}: {text}", Theme.PForHealth(worst.Health));
+        return ($"{label}: {text}", Theme.PWarn); // a forecast: amber, whether tight or running dry
     }
 
     private static string LiveVerdict(QuotaWindow w, WindowEvaluation ev, DateTimeOffset snapAt, DateTimeOffset now)
@@ -398,6 +442,7 @@ internal sealed class PopupCanvas : Control
     // must not change with the glass palette), a white veil for the hovered row
     private static readonly Color TintStrong = Color.FromArgb(30, Theme.Warn);
     private static readonly Color TintSoft = Color.FromArgb(20, Theme.Warn);
+    private static readonly Color TintBlocked = Color.FromArgb(40, Theme.Crit); // cannot be used right now
     private static readonly Color HoverVeil = Color.FromArgb(14, 255, 255, 255);
     private static readonly Color GlassEdge = Color.FromArgb(22, 255, 255, 255); // light rim of a card on glass
 
@@ -413,6 +458,7 @@ internal sealed class PopupCanvas : Control
     {
         var soft = Over(TintSoft, Theme.Card);
         var strong = Over(TintStrong, Theme.Card);
+        var blocked = Over(TintBlocked, Theme.Card);
         return new GlassSurface(new[]
         {
             // neutral: shadow → pane → card → hovered card / button → bar track
@@ -426,6 +472,11 @@ internal sealed class PopupCanvas : Control
             {
                 (Theme.Bg, Glass.PaneAlpha), (soft, Glass.TintSoftAlpha), (strong, Glass.TintStrongAlpha),
                 (Over(HoverVeil, strong), Glass.TintStrongAlpha)
+            },
+            // red: pane → card of a blocked account → hovered
+            new (Color, float)[]
+            {
+                (Theme.Bg, Glass.PaneAlpha), (blocked, Glass.TintBlockedAlpha), (Over(HoverVeil, blocked), Glass.TintBlockedAlpha)
             }
         });
     }
@@ -490,12 +541,44 @@ internal sealed class PopupCanvas : Control
             ("card-hover", Over(HoverVeil, Theme.Card), Glass.CardAlpha),
             ("tint-soft", Over(TintSoft, Theme.Card), Glass.TintSoftAlpha),
             ("tint-strong", Over(TintStrong, Theme.Card), Glass.TintStrongAlpha),
+            ("tint-blocked", Over(TintBlocked, Theme.Card), Glass.TintBlockedAlpha),
             ("track", Theme.TrackOnCard, Glass.CardAlpha), ("text", Theme.Text, 1f), ("faint", Theme.PFaint, 1f),
             ("stale", Theme.PStale, 1f), ("crit", Theme.PCrit, 1f), ("warn", Theme.PWarn, 1f), ("ok", Theme.Ok, 1f)
         };
         var wrong = items.Where(i => Math.Abs(_surface.AlphaOf(i.color) - i.want * 255) > 4).Select(i => i.name).ToList();
         return string.Join(" ", items.Select(i => $"{i.name}={_surface.AlphaOf(i.color)}")) +
                $" wrong=[{string.Join(", ", wrong)}] (expect none)";
+    }
+
+    /// <summary>Opaque palette (glass off, Windows 10): contrast of the text tones on the tinted
+    /// cards (render harness).</summary>
+    internal static string OpaqueTintContrast()
+    {
+        var probe = new RowInfo { View = null!, State = RowState.Blocked };
+        var cards = new (string name, Color color)[]
+        {
+            ("tint-soft", Over(TintSoft, Theme.Card)), ("tint-strong", Over(TintStrong, Theme.Card)),
+            ("tint-blocked", Over(TintBlocked, Theme.Card))
+        };
+        var texts = new (string name, Color color)[]
+        {
+            ("text", Theme.Text), ("muted", Theme.PMuted), ("warn", Theme.PWarn), ("faint", probe.Faint),
+            ("old", probe.Old), ("crit", probe.Crit)
+        };
+        var min = double.MaxValue;
+        var weak = new List<string>();
+        foreach (var (cn, cc) in cards)
+        {
+            var under = Glass.Luminance(cc.R, cc.G, cc.B);
+            foreach (var (tn, tc) in texts)
+            {
+                var ratio = (Glass.Luminance(tc.R, tc.G, tc.B) + 0.05) / (under + 0.05);
+                min = Math.Min(min, ratio);
+                if (ratio < 4.5) weak.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{tn}/{cn}={ratio:0.00}"));
+            }
+        }
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"opaque tinted cards: min contrast={min:0.00} below 4.5=[{string.Join(", ", weak)}] (expect none)");
     }
 
     internal int[] RenderGlassFrame(Size size)
@@ -529,6 +612,7 @@ internal sealed class PopupCanvas : Control
             if (y > body.Bottom || y + row.H < body.Top) continue;
             DrawRow(g, row, y, w, now, i == _hoverRow && _hover == Zone.Row);
         }
+        if (_sectionY >= 0) DrawSection(g, top + _sectionY, w);
         g.Restore(state);
 
         DrawHeader(g, w, _scroll > 0.5f);
@@ -614,15 +698,29 @@ internal sealed class PopupCanvas : Control
         ? descending ? "Z–A" : "A–Z"
         : descending ? "zuletzt leer" : "zuerst leer";
 
+    /// <summary>Caption above the accounts that cannot be used right now. It sits closer to its
+    /// cards than to the row above.</summary>
+    private void DrawSection(Graphics g, int y, int w)
+    {
+        var text = $"NICHT NUTZBAR · {_rows.Count(r => r.State == RowState.Blocked)}";
+        var tw = Gfx.Measure(g, text, Theme.FCaps);
+        var band = new Rectangle(NameX, y + S(7), tw + S(2), S(15));
+        Gfx.Text(g, text, Theme.FCaps, band, Theme.PFaint);
+        var ly = band.Top + S(8);
+        using var pen = new Pen(Theme.CardBorder);
+        g.DrawLine(pen, band.Right + S(8), ly, w - S(OuterX) - 1, ly);
+    }
+
     /// <summary>"13 Konten" plus one entry per state that occurs: a coloured dot carries the
     /// state, the text stays grey – five coloured words read as a colour band. Entries that
     /// would not fit the width are left out, least urgent first.</summary>
     private void DrawSummary(Graphics g, int x, int y, int limit)
     {
-        int crit = 0, errors = 0, warn = 0, stale = 0, ok = 0;
+        int blocked = 0, crit = 0, errors = 0, warn = 0, stale = 0, ok = 0;
         foreach (var r in _rows)
             switch (r.State)
             {
+                case RowState.Blocked: blocked++; break;
                 case RowState.Crit: crit++; break;
                 case RowState.Error: errors++; break;
                 case RowState.Warn: warn++; break;
@@ -637,8 +735,9 @@ internal sealed class PopupCanvas : Control
         cx += tw;
 
         var parts = new List<(string text, Color dot)>();
-        if (crit > 0) parts.Add(($"{crit} kritisch", Theme.PCrit));
+        if (blocked > 0) parts.Add(($"{blocked} gesperrt", Theme.PCrit));
         if (errors > 0) parts.Add(($"{errors} Fehler", Theme.PCrit));
+        if (crit > 0) parts.Add((crit == 1 ? "1 läuft leer" : $"{crit} laufen leer", Theme.PWarn));
         if (warn > 0) parts.Add(($"{warn} knapp", Theme.PWarn));
         if (stale > 0) parts.Add(($"{stale} veraltet", Theme.PStale));
         if (ok > 0) parts.Add(($"{ok} OK", Theme.Ok));
@@ -695,19 +794,13 @@ internal sealed class PopupCanvas : Control
     }
 
     /// <summary>One account = one card. Every row has the same shape; a problem only changes the
-    /// tint (amber, Dominic 28.10.2026: also for critical/error – red stays for text and bars).</summary>
+    /// tint: amber for forecasts and errors, red for an account that cannot be used right now.</summary>
     private void DrawRow(Graphics g, RowInfo row, int y, int w, DateTimeOffset now, bool hover)
     {
         var v = row.View;
         var card = new RectangleF(S(OuterX), y, w - 2 * S(OuterX), row.H);
         Gfx.FillRound(g, Theme.Card, card, S(8));
-        var tint = row.State switch
-        {
-            RowState.Crit or RowState.Error => TintStrong,
-            RowState.Warn => TintSoft,
-            _ => Color.Empty
-        };
-        if (!tint.IsEmpty) Gfx.FillRound(g, tint, card, S(8));
+        if (row.Tinted) Gfx.FillRound(g, row.Tint, card, S(8));
         if (hover) Gfx.FillRound(g, HoverVeil, card, S(8));
         if (_glass) Gfx.DrawRound(g, GlassEdge, RectangleF.Inflate(card, -0.5f, -0.5f), S(8));
 
@@ -731,7 +824,7 @@ internal sealed class PopupCanvas : Control
                 break;
             case RowKind.Error:
                 TextRenderer.DrawText(g, ShortError(v.Snapshot?.Error), Theme.FSmall,
-                    new Rectangle(x1, y + S(8), cellsW, S(34)), Theme.PCrit,
+                    new Rectangle(x1, y + S(8), cellsW, S(34)), row.Crit,
                     TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding |
                     TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.NoPrefix);
                 break;
@@ -783,14 +876,14 @@ internal sealed class PopupCanvas : Control
     {
         if (win is null)
         {
-            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x, y + S(10), cw, S(16)), Theme.PFaint);
+            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x, y + S(10), cw, S(16)), row.Faint);
             return;
         }
         // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
         // lime = unused (0 %) – forecast health does not drive the bar colour
         var frac0 = win.UsedFraction ?? 0;
         var color = row.Stale ? Theme.PStale : frac0 >= 0.999 ? Theme.PCrit : frac0 > 0 ? Theme.PWarn : Theme.Ok;
-        var valueColor = row.Stale ? Theme.PStale : color == Theme.Ok ? Theme.Text : color;
+        var valueColor = row.Stale ? row.Old : frac0 >= 0.999 ? row.Crit : color == Theme.Ok ? Theme.Text : color;
 
         var value = Formatting.PercentShort(win.UsedFraction);
         var vw = Gfx.Measure(g, value, Theme.FValue);
@@ -820,7 +913,7 @@ internal sealed class PopupCanvas : Control
                 if (win.ResetAtUtc is not null && Theme.IconFamily is not null && room >= iw)
                 {
                     Gfx.Text(g, Theme.GlyphClock, Theme.FIconSmall, new Rectangle(right - iw, y + S(12), iw, S(15)),
-                        Theme.PFaint, TextFormatFlags.VerticalCenter);
+                        row.Faint, TextFormatFlags.VerticalCenter);
                     right -= iw + S(2);
                 }
             }
@@ -832,7 +925,7 @@ internal sealed class PopupCanvas : Control
         {
             var lx = x + vw + S(8);
             if (right - lx > S(16))
-                Gfx.Text(g, label, Theme.FTiny, new Rectangle(lx, y + S(12), right - lx - S(4), S(15)), Theme.PFaint);
+                Gfx.Text(g, label, Theme.FTiny, new Rectangle(lx, y + S(12), right - lx - S(4), S(15)), row.Faint);
         }
 
         var bar = new RectangleF(x, y + S(32), cw, S(6));
@@ -892,17 +985,17 @@ internal sealed class PopupCanvas : Control
         DateTimeOffset now)
     {
         row.View.Evals.TryGetValue(span.Key, out var ev);
-        var textColor = row.Stale ? Theme.PStale : Theme.Text;
+        var textColor = row.Stale ? row.Old : Theme.Text;
 
         // cell 1: amount
         var amount = span.Remaining is null ? "–" : Formatting.Money(span.Remaining, span.Unit);
-        ValueWithCaption(g, amount, textColor, span.IsInfoOnly ? span.Label : "Guthaben", x1, x2 - S(6), y);
+        ValueWithCaption(g, amount, textColor, span.IsInfoOnly ? span.Label : "Guthaben", row.Faint, x1, x2 - S(6), y);
         if (!string.IsNullOrEmpty(span.Note))
-            Gfx.Text(g, span.Note, Theme.FTiny, new Rectangle(x1, y + S(27), x2 + cw - x1, S(15)), Theme.PFaint);
+            Gfx.Text(g, span.Note, Theme.FTiny, new Rectangle(x1, y + S(27), x2 + cw - x1, S(15)), row.Faint);
 
         if (span.IsInfoOnly)
         {
-            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x2, y + S(10), cw, S(16)), Theme.PFaint);
+            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x2, y + S(10), cw, S(16)), row.Faint);
             return;
         }
 
@@ -913,29 +1006,30 @@ internal sealed class PopupCanvas : Control
         {
             var left = tte - (now - (row.Display?.AtUtc ?? now));
             runway = "~" + Formatting.Span(left < TimeSpan.Zero ? TimeSpan.Zero : left);
-            runwayColor = row.Stale ? Theme.PStale : ev.Health is Health.Warn or Health.Crit ? Theme.PForHealth(ev.Health) : Theme.Text;
+            runwayColor = row.Stale ? row.Old : ev.Health is Health.Warn or Health.Crit ? Theme.PWarn : Theme.Text;
         }
         else
         {
             runway = "—";
-            runwayColor = Theme.PFaint;
+            runwayColor = row.Faint;
         }
-        ValueWithCaption(g, runway, runwayColor, "Reichweite", x2, x2 + restWidth, y);
+        ValueWithCaption(g, runway, runwayColor, "Reichweite", row.Faint, x2, x2 + restWidth, y);
         if (string.IsNullOrEmpty(span.Note))
             Gfx.Text(g, ev is { HasRate: true } ? "bei aktuellem Verbrauch" : "kein Verbrauch", Theme.FTiny,
-                new Rectangle(x2, y + S(27), restWidth, S(15)), Theme.PFaint);
+                new Rectangle(x2, y + S(27), restWidth, S(15)), row.Faint);
     }
 
     /// <summary>Value in the value font, its caption small and grey right behind it (left out
     /// when it would pass <paramref name="limitRight"/>).</summary>
-    private static void ValueWithCaption(Graphics g, string value, Color color, string caption, int x, int limitRight, int y)
+    private static void ValueWithCaption(Graphics g, string value, Color color, string caption, Color captionColor,
+        int x, int limitRight, int y)
     {
         var vw = Gfx.Measure(g, value, Theme.FValue);
         Gfx.Text(g, value, Theme.FValue, new Rectangle(x, y + S(5), vw + S(4), S(22)), color);
         var tw = Gfx.Measure(g, caption, Theme.FTiny);
         var cx = x + vw + S(7);
         if (cx + tw <= limitRight)
-            Gfx.Text(g, caption, Theme.FTiny, new Rectangle(cx, y + S(12), tw + S(2), S(15)), Theme.PFaint);
+            Gfx.Text(g, caption, Theme.FTiny, new Rectangle(cx, y + S(12), tw + S(2), S(15)), captionColor);
     }
 
     /// <summary>Additional window: label under the name column, value across the cells.</summary>
@@ -947,7 +1041,7 @@ internal sealed class PopupCanvas : Control
         var width = CellsWidth(w);
         if (win.IsInfoOnly)
         {
-            Gfx.Text(g, win.Note ?? "", Theme.FTiny, new Rectangle(x, y + S(2), width, S(15)), Theme.PFaint);
+            Gfx.Text(g, win.Note ?? "", Theme.FTiny, new Rectangle(x, y + S(2), width, S(15)), row.Faint);
         }
         else if (win.IsBalance)
         {

@@ -76,7 +76,7 @@ kommen über `notify-send`, sofern installiert.
 - **Fable-Limit:** Claude-Abos haben für das Fable-Modell ein eigenes Wochenlimit. Sobald
   ein Konto eins meldet, erscheint eine dritte Spalte **FABLE** (das Popup wird breiter).
   Ist die Fable-Woche aufgebraucht, wird das Konto amber markiert und trägt den Status
-  „FABLE LEER“ – nie „KRITISCH“, weil alle anderen Modelle dort weiterlaufen.
+  „FABLE LEER“ – nie „GESPERRT“, weil alle anderen Modelle dort weiterlaufen.
 - **Tempo-Strich:** Ein dünner senkrechter Strich auf jedem Balken zeigt, wie viel Zeit des
   Fensters schon um ist (eine Woche, die in zwei Tagen zurückgesetzt wird, ist zu 5/7 um).
   Endet der Balken links vom Strich, liegt der Verbrauch unter dem Zeitanteil. Das ist das
@@ -91,12 +91,15 @@ kommen über `notify-send`, sofern installiert.
   unter *Einstellungen → Popup als Glas*; ohne Transparenzeffekte, im Hochkontrast-Modus und
   in Remote-Sitzungen bleibt das Popup ohnehin deckend.
 - **Klick auf einen Spaltenkopf** sortiert: KONTO nach Name, 5 STUNDEN / WOCHE / FABLE danach,
-  *welches Konto zuerst leer ist* (gesperrte und bald leere oben, dann die vollsten).
+  *welches Konto zuerst leer ist* (bald leere oben, dann die vollsten).
   Zweiter Klick dreht die Reihenfolge um („zuletzt leer“), dritter Klick stellt den
   Standard wieder her; die Wahl bleibt gespeichert.
+- **Konten, die gerade nicht nutzbar sind**, stehen unabhängig von der Sortierung unter
+  allen anderen, unter der Überschrift „NICHT NUTZBAR“ – das als Nächstes freie zuerst. Sie
+  tragen den Status „GESPERRT“ und eine rote Karte. Rot steht nur für diesen Zustand.
 - **Zellfarben** nach Verbrauch: lime = unbenutzt, amber = in Benutzung, rot = Limit
   erreicht, grau = veraltet. Ob ein Konto bis zum Reset reicht, sagen Prognosezeile und
-  Zeilenhintergrund (amber bei knapp, kritisch oder Fehler).
+  Zeilenhintergrund (amber bei knapp, bald leer oder Fehler).
 - **Tray-Icon**: Ring mit der mittleren Wochenauslastung deiner Anthropic-Konten, Prozent
   in der Mitte; ein Eckpunkt markiert Konten mit Problemen.
 - Pro Konto eine Karte, pro Fenster Prozentwert, Reset-Countdown und Balken. Ein
@@ -105,7 +108,7 @@ kommen über `notify-send`, sofern installiert.
   („Woche: leer in … – Reset erst in …!“).
 - **Mouse-over auf ein Konto** zeigt alle Fenster mit genauer Reset-Zeit.
 - Guthaben-Konten (DeepSeek/Moonshot): Restbetrag + Reichweite bei aktuellem Verbrauch.
-- Balloon-Warnung, sobald ein Konto kritisch wird (abschaltbar).
+- Balloon-Warnung, sobald ein Konto leerläuft oder gesperrt wird (abschaltbar).
 
 ## Wie die Prognose funktioniert
 
@@ -115,10 +118,17 @@ die Zeit bis zum Leerlaufen. Diese wird gegen die Restzeit bis zum Reset gestell
 
 - **OK** – Restlaufzeit > Zeit bis Reset (du schaffst es)
 - **KNAPP** – Restlaufzeit nur knapp über der Reset-Zeit (< 15 % Puffer)
-- **KRITISCH** – Kontingent geht vor dem Reset leer
+- **LÄUFT LEER** – Kontingent geht vor dem Reset leer
 
 Quota-Resets und Guthaben-Aufladungen werden erkannt und setzen die Rate-Berechnung
-zurück. Guthaben ohne Reset: OK > 2 Tage, KNAPP > 12 h, KRITISCH darunter.
+zurück. Guthaben ohne Reset: OK > 2 Tage, KNAPP > 12 h, LÄUFT LEER darunter.
+
+**GESPERRT** ist keine Prognose, sondern der Stand jetzt: Ein allgemeines Limit steht bis
+zum Reset bei 100 %, oder ein Prepaid-Guthaben kann keine Anfragen mehr bezahlen (DeepSeek
+meldet `is_available: false`; Moonshot und OpenRouter bei null oder darunter). Ein
+aufgebrauchtes Modell-Limit (Fable) sperrt das Konto nicht. Weil die Prognose die letzte
+Stunde hochrechnet, ist ein stark genutztes Konto schnell „LÄUFT LEER“ – es funktioniert
+weiter; „GESPERRT“ nicht.
 
 ## Kosten der Messung
 

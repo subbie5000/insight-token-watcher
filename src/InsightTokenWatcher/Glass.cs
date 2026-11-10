@@ -26,6 +26,7 @@ internal static class Glass
     public static float CardAlpha { get; private set; }
     public static float TintSoftAlpha { get; private set; }
     public static float TintStrongAlpha { get; private set; }
+    public static float TintBlockedAlpha { get; private set; }
 
     /// <summary>Relative luminance (0..1) the current opacities were computed for.</summary>
     public static double BackdropLuminance { get; private set; } = -1;
@@ -33,7 +34,7 @@ internal static class Glass
     static Glass() => Adapt(1); // until measured: assume the worst case, a white window
 
     private const double MinContrast = 4.6;
-    private const float PaneMin = 0.52f, CardMin = 0.66f, TintSoftMin = 0.78f, TintStrongMin = 0.82f;
+    private const float PaneMin = 0.52f, CardMin = 0.66f, TintSoftMin = 0.78f, TintStrongMin = 0.82f, TintBlockedMin = 0.82f;
 
     /// <summary>
     /// Sets the opacities for a backdrop of the given luminance: for each surface the lowest
@@ -47,14 +48,17 @@ internal static class Glass
         var grey = ToLevel(luminance);
         var strongTint = Over(30, Theme.Warn, Theme.Card);
         var softTint = Over(20, Theme.Warn, Theme.Card);
+        var blockedTint = Over(40, Theme.Crit, Theme.Card);
         var pane = Solve(Theme.Bg, grey, PaneMin, GlassText.Faint);
         var card = Solve(Theme.Card, grey, CardMin, GlassText.Faint, GlassText.Crit);
         var soft = Math.Max(card, Solve(softTint, grey, TintSoftMin, GlassText.Crit));
         var strong = Math.Max(soft, Solve(strongTint, grey, TintStrongMin, GlassText.Crit));
+        var blocked = Math.Max(card, Solve(blockedTint, grey, TintBlockedMin, GlassText.Crit));
         var changed = Math.Abs(pane - PaneAlpha) > 0.015f || Math.Abs(card - CardAlpha) > 0.015f ||
-                      Math.Abs(soft - TintSoftAlpha) > 0.015f || Math.Abs(strong - TintStrongAlpha) > 0.015f;
+                      Math.Abs(soft - TintSoftAlpha) > 0.015f || Math.Abs(strong - TintStrongAlpha) > 0.015f ||
+                      Math.Abs(blocked - TintBlockedAlpha) > 0.015f;
         if (!changed && BackdropLuminance >= 0) return false;
-        (PaneAlpha, CardAlpha, TintSoftAlpha, TintStrongAlpha) = (pane, card, soft, strong);
+        (PaneAlpha, CardAlpha, TintSoftAlpha, TintStrongAlpha, TintBlockedAlpha) = (pane, card, soft, strong, blocked);
         BackdropLuminance = luminance;
         return true;
     }

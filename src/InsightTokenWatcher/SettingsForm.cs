@@ -65,7 +65,7 @@ internal sealed class SettingsForm : Form
         Controls.Add(MakeButton("Entfernen", 228, y, (_, _) => RemoveSelected()));
         Controls.Add(MakeButton("Testen", 334, y, (_, _) => TestSelected()));
 
-        _chkBalloons.Text = "Warnung einblenden, wenn ein Konto kritisch wird";
+        _chkBalloons.Text = "Warnung einblenden, wenn ein Konto leerläuft oder gesperrt wird";
         _chkBalloons.Location = new Point(16, y + 44);
         _chkBalloons.AutoSize = true;
         _chkBalloons.ForeColor = Theme.Text;

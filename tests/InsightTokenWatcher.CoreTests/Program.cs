@@ -797,7 +797,7 @@ Run("sort: title click cycles ascending → descending → default", () =>
     Check(AccountSort.Next(SortColumn.Long, true, SortColumn.Name) == (SortColumn.Name, false), "other column starts ascending");
 });
 
-Run("sort: week – runs out first on top, then fullest; no week window always last", () =>
+Run("sort: week – runs out first on top, then fullest; no week window last; blocked below everything", () =>
 {
     var input = new List<AccountView>
     {
@@ -810,9 +810,9 @@ Run("sort: week – runs out first on top, then fullest; no week window always l
         SortView("G-90-stale", weekUsed: 0.9, tteHours: 1, stale: true)       // no projection on stale data
     };
     var asc = Names(AccountSort.Apply(input, SortColumn.Long, false, sortNow));
-    Check(asc == "A-blocked,B-empty-in-10h,G-90-stale,C-80-idle,D-20-safe,E-balance,F-loading", "asc " + asc);
+    Check(asc == "B-empty-in-10h,G-90-stale,C-80-idle,D-20-safe,E-balance,F-loading,A-blocked", "asc " + asc);
     var desc = Names(AccountSort.Apply(input, SortColumn.Long, true, sortNow));
-    Check(desc == "E-balance,D-20-safe,C-80-idle,G-90-stale,B-empty-in-10h,A-blocked,F-loading", "desc " + desc);
+    Check(desc == "E-balance,D-20-safe,C-80-idle,G-90-stale,B-empty-in-10h,F-loading,A-blocked", "desc " + desc);
 });
 
 Run("sort: a balance running dry within the column horizon ranks as 'runs out'", () =>
@@ -846,6 +846,142 @@ Run("sort: 5h column uses the short window; a passed reset counts as fresh", () 
         "short " + Names(AccountSort.Apply(input, SortColumn.Short, false, sortNow)));
     var week = Names(AccountSort.Apply(input, SortColumn.Long, false, sortNow));
     Check(week == "week-only,five-70,five-30,week-reset-passed", "blocked but reset passed is not 'empty' " + week);
+});
+
+// ---------- usable right now? ----------
+
+AccountView Acc(string name, bool stale, params QuotaWindow[] windows)
+{
+    var cfg = new AccountConfig { Name = name, Provider = ProviderKind.Anthropic };
+    var snap = new AccountSnapshot { AccountId = cfg.Id, Ok = true, AtUtc = sortNow };
+    snap.Windows.AddRange(windows);
+    return stale
+        ? new AccountView { Config = cfg, Snapshot = AccountSnapshot.Failure(cfg.Id, "HTTP 401 expired"), LastGood = snap }
+        : new AccountView { Config = cfg, Snapshot = snap, LastGood = snap };
+}
+QuotaWindow Win(string key, double minutes, double used, double? resetHours) => new()
+{
+    Key = key, WindowMinutes = minutes, UsedFraction = used, ResetAtUtc = resetHours is { } h ? sortNow.AddHours(h) : null
+};
+QuotaWindow Bal(double remaining, bool unusable) => new()
+{
+    Key = "balance", IsBalance = true, Remaining = remaining, Unit = "USD", Unusable = unusable
+};
+
+Run("usability: blocked = a general limit is reached and has not reset yet", () =>
+{
+    var week = Usability.Blocked(Acc("w", false, Win("5h", 300, 0.2, 3), Win("7d", 10080, 1.0, 63)), sortNow);
+    Check(week is { Window.Key: "7d" } && week.FreeAtUtc == sortNow.AddHours(63), "week at 100 %: free at its reset");
+    Check(Usability.Blocked(Acc("ok", false, Win("5h", 300, 0.97, 3), Win("7d", 10080, 0.99, 63)), sortNow) is null,
+        "97 % and 99 % still work – running dry is a forecast, not a block");
+    Check(Usability.Blocked(Acc("passed", false, Win("7d", 10080, 1.0, -1)), sortNow) is null, "reset passed: fresh again");
+    var noReset = Usability.Blocked(Acc("unknown", false, Win("7d", 10080, 1.0, null)), sortNow);
+    Check(noReset is { FreeAtUtc: null }, "limit reached, reset unknown: blocked without a time");
+    Check(Usability.Blocked(new AccountView { Config = new AccountConfig { Name = "loading" } }, sortNow) is null, "no data");
+});
+
+Run("usability: several limits reached – free when the last one resets", () =>
+{
+    var both = Usability.Blocked(Acc("b", false, Win("5h", 300, 1.0, 3), Win("7d", 10080, 1.0, 63)), sortNow);
+    Check(both is { Window.Key: "7d" } && both.FreeAtUtc == sortNow.AddHours(63), "the week decides, not the 5 h window");
+    var reversed = Usability.Blocked(Acc("r", false, Win("7d", 10080, 1.0, 63), Win("5h", 300, 1.0, 3)), sortNow);
+    Check(reversed is { Window.Key: "7d" }, "independent of the order the provider lists them in");
+    var five = Usability.Blocked(Acc("f", false, Win("5h", 300, 1.0, 3), Win("7d", 10080, 0.4, 63)), sortNow);
+    Check(five is { Window.Key: "5h" } && five.FreeAtUtc == sortNow.AddHours(3), "only the 5 h window: free in 3 h");
+    var open = Usability.Blocked(Acc("o", false, Win("7d", 10080, 1.0, null), Win("5h", 300, 1.0, 3)), sortNow);
+    Check(open is { FreeAtUtc: null }, "one of them without a reset time: no time can be promised");
+});
+
+Run("usability: a model limit (Fable) never blocks the account", () =>
+{
+    Check(Usability.Blocked(Acc("fable", false, Win("7d", 10080, 0.4, 63), FableWin(1.0)), sortNow) is null,
+        "Fable used up, week has room: every other model still runs");
+    var week = Usability.Blocked(Acc("both", false, Win("7d", 10080, 1.0, 63), FableWin(1.0, 100)), sortNow);
+    Check(week is { Window.Key: "7d" } && week.FreeAtUtc == sortNow.AddHours(63), "the general week decides, not the Fable reset");
+});
+
+Run("usability: a limit that was reached stays reached when a later poll fails", () =>
+{
+    Check(Usability.Blocked(Acc("stale", true, Win("7d", 10080, 1.0, 63)), sortNow) is { Window.Key: "7d" }, "old values, reset ahead");
+    Check(Usability.Blocked(Acc("stale-passed", true, Win("7d", 10080, 1.0, -1)), sortNow) is null, "old values, reset passed");
+});
+
+Run("usability: a balance blocks only when the poller says it cannot pay", () =>
+{
+    var unusable = Usability.Blocked(Acc("ds", false, Bal(-0.01, true)), sortNow);
+    Check(unusable is { FreeAtUtc: null, Window.IsBalance: true }, "unusable balance: blocked, no time known");
+    Check(Usability.Blocked(Acc("zero", false, Bal(0, false)), sortNow) is null,
+        "0 $ without the flag (e.g. OpenAI credit grants of an invoiced organisation) is not a block");
+    Check(Usability.Blocked(Acc("low", false, Bal(0.59, false)), sortNow) is null, "a small balance still works");
+    var info = new QuotaWindow { Key = "key-info", IsInfoOnly = true, UsedFraction = 1.0 };
+    Check(Usability.Blocked(Acc("info", false, info, Bal(5, false)), sortNow) is null, "info values never block");
+});
+
+Run("pollers: which balances count as unusable", () =>
+{
+    var ds = DeepSeekPoller.ParseBody(Guid.NewGuid(),
+        """{ "is_available": false, "balance_infos": [ { "currency": "USD", "total_balance": "-0.01", "granted_balance": "0.00", "topped_up_balance": "-0.01" } ] }""");
+    Check(ds.Ok && ds.Windows[0].Unusable && ds.Windows[0].Note!.Contains("nicht nutzbar"), "DeepSeek is_available=false");
+    var dsOk = DeepSeekPoller.ParseBody(Guid.NewGuid(),
+        """{ "is_available": true, "balance_infos": [ { "currency": "USD", "total_balance": "0.02", "granted_balance": "0.00", "topped_up_balance": "0.02" } ] }""");
+    Check(dsOk.Ok && !dsOk.Windows[0].Unusable, "DeepSeek is_available=true: usable, however little is left");
+
+    var empty = MoonshotPoller.ParseBody(Guid.NewGuid(), """{"available_balance":0,"voucher_balance":0,"cash_balance":0}""", "https://api.moonshot.ai");
+    var debt = MoonshotPoller.ParseBody(Guid.NewGuid(), """{"available_balance":-1.5,"voucher_balance":0,"cash_balance":-1.5}""", "https://api.moonshot.ai");
+    var some = MoonshotPoller.ParseBody(Guid.NewGuid(), """{"available_balance":0.01,"voucher_balance":0,"cash_balance":0.01}""", "https://api.moonshot.ai");
+    Check(empty.Windows[0].Unusable && debt.Windows[0].Unusable && !some.Windows[0].Unusable, "Moonshot: available_balance <= 0");
+
+    AccountSnapshot OpenRouter(double credits, double usage)
+    {
+        using var http = new HttpClient(new FakeHandler((req, _) => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(req.RequestUri!.AbsolutePath.EndsWith("/credits")
+                ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{{\"data\":{{\"total_credits\":{credits},\"total_usage\":{usage}}}}}")
+                : """{"data":{"limit":null,"usage_daily":0,"usage_weekly":0,"usage_monthly":0,"is_free_tier":false}}""")
+        }));
+        var cfg = new AccountConfig { Name = "OR", Provider = ProviderKind.OpenRouter };
+        return ProviderInfo.Poller(ProviderKind.OpenRouter).PollAsync(cfg, "k", http, default).GetAwaiter().GetResult();
+    }
+    Check(!OpenRouter(10, 9.41).Windows.Single(w => w.IsBalance).Unusable, "OpenRouter 0.59 $ left");
+    Check(OpenRouter(10, 10).Windows.Single(w => w.IsBalance).Unusable, "OpenRouter used up");
+    Check(OpenRouter(10, 10.004).Windows.Single(w => w.IsBalance).Unusable, "OpenRouter: what the row shows as 0,00 $ is used up");
+
+    var grants = OpenAiPoller.ParseCreditGrants(Guid.NewGuid(), """{"total_granted":0,"total_used":0,"total_available":0}""");
+    Check(grants.Ok && !grants.Windows[0].Unusable, "OpenAI: no grants says nothing about an invoiced organisation");
+});
+
+Run("sort: accounts that cannot be used go below all others – in every column and direction", () =>
+{
+    var input = new List<AccountView>
+    {
+        Acc("B-week-full-63h", false, Win("5h", 300, 0.0, 3), Win("7d", 10080, 1.0, 63)),
+        Acc("A-usable-90", false, Win("5h", 300, 0.5, 3), Win("7d", 10080, 0.9, 20)),
+        Acc("E-balance-empty", false, Bal(-0.01, true)),
+        Acc("D-usable-10", false, Win("5h", 300, 0.1, 3), Win("7d", 10080, 0.1, 100)),
+        Acc("C-5h-full-3h", false, Win("5h", 300, 1.0, 3), Win("7d", 10080, 0.3, 100)),
+        Acc("F-week-full-142h", true, Win("7d", 10080, 1.0, 142)),
+        new AccountView { Config = new AccountConfig { Name = "G-loading" } }
+    };
+    const string blocked = "C-5h-full-3h,B-week-full-63h,F-week-full-142h,E-balance-empty";
+    string Order(SortColumn c, bool desc) => Names(AccountSort.Apply(input, c, desc, sortNow));
+    Check(Order(SortColumn.None, false) == "A-usable-90,D-usable-10,G-loading," + blocked, "default " + Order(SortColumn.None, false));
+    Check(Order(SortColumn.Name, false) == "A-usable-90,D-usable-10,G-loading," + blocked, "name asc " + Order(SortColumn.Name, false));
+    Check(Order(SortColumn.Name, true) == "G-loading,D-usable-10,A-usable-90," + blocked, "name desc " + Order(SortColumn.Name, true));
+    Check(Order(SortColumn.Long, false) == "A-usable-90,D-usable-10,G-loading," + blocked, "week asc " + Order(SortColumn.Long, false));
+    Check(Order(SortColumn.Long, true) == "D-usable-10,A-usable-90,G-loading," + blocked, "week desc " + Order(SortColumn.Long, true));
+    Check(Order(SortColumn.Short, false) == "A-usable-90,D-usable-10,G-loading," + blocked, "5h asc " + Order(SortColumn.Short, false));
+    Check(Order(SortColumn.Model, true) == "A-usable-90,D-usable-10,G-loading," + blocked, "model desc " + Order(SortColumn.Model, true));
+
+    // every blocked account sits below every usable one – for all 2^n subsets the same rule
+    foreach (var column in new[] { SortColumn.None, SortColumn.Name, SortColumn.Short, SortColumn.Long, SortColumn.Model })
+        foreach (var desc in new[] { false, true })
+        {
+            var order = AccountSort.Apply(input, column, desc, sortNow);
+            var firstBlocked = order.FindIndex(v => Usability.Blocked(v, sortNow) is not null);
+            Check(firstBlocked == 3 && order.Skip(firstBlocked).All(v => Usability.Blocked(v, sortNow) is not null),
+                $"{column}/{desc}: " + Names(order));
+            Check(order.Count == input.Count && order.Distinct().Count() == input.Count, "nobody lost or doubled");
+        }
 });
 
 Run("layout: a window of unknown length listed first does not take the 5 h column", () =>

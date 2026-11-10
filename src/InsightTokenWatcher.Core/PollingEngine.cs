@@ -326,7 +326,9 @@ public sealed class PollingEngine : IDisposable
         Updated?.Invoke(snap.AccountId);
     }
 
-    private static List<QuotaWindow> GeneralWindows(AccountSnapshot snap)
+    /// <summary>The windows that decide whether the account as a whole is usable: all without a
+    /// model scope (an account that reports nothing else is judged by what it has).</summary>
+    internal static List<QuotaWindow> GeneralWindows(AccountSnapshot snap)
     {
         var general = snap.Windows.Where(w => w.Scope is null).ToList();
         return general.Count > 0 ? general : snap.Windows;

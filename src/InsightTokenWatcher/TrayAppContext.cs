@@ -293,6 +293,7 @@ internal sealed class TrayAppContext : ApplicationContext
                     name = v.Config.Name,
                     provider = v.Config.Provider.ToString(),
                     health = v.Health.ToString(),
+                    blocked = Usability.Blocked(v, DateTimeOffset.UtcNow) is not null,
                     stale = v.IsStale,
                     failure = v.Failure.ToString(),
                     lastGood = v.LastGood?.AtUtc.ToLocalTime(),

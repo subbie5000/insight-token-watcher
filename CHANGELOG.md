@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.11.0] - 2026-11-10
+
+### Changed
+- **Red now means "cannot be used right now".** Until now "KRITISCH" covered two different
+  things in the same red: accounts whose limit is reached, and accounts that would run dry
+  before their reset at the pace of the last hour – with several accounts in use nearly the
+  whole list was red.
+  - **GESPERRT** (red status, red card): a general limit stands at 100 % until its reset, or a
+    prepaid balance cannot pay for requests. A used-up model limit (Fable) does not count.
+  - **LÄUFT LEER** (amber, replaces "KRITISCH"): the forecast says the window runs dry before
+    its reset. The account still works.
+  - The summary counts both separately ("3 gesperrt · 7 laufen leer").
+- **Blocked accounts sit below all others** under the caption "NICHT NUTZBAR", whatever the
+  sort order: the one that works again first on top, an empty balance last. The column sort
+  applies to the accounts above. (Before, sorting by a window column put them at the very top.)
+- A balance the provider reports as unusable counts as blocked instead of "OK": DeepSeek
+  (`is_available: false`), Moonshot and OpenRouter at or below zero. OpenAI credit grants are
+  not judged – an organisation billed by invoice has none and still runs.
+- Text on tinted cards uses brighter tones in the opaque palette (Linux, Windows without
+  glass): red and grey text had only 3.5–4:1 there.
+- `status.json` lists `blocked` per account.
+
 ## [1.10.1] - 2026-11-10
 
 ### Fixed

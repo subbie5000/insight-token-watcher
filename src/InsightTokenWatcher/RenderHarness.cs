@@ -31,6 +31,7 @@ internal static class RenderHarness
         var full = canvas.DesiredHeight;
         report.AppendLine($"scale={Theme.DpiScale} width={canvas.Width} desiredHeight={full} rows={canvas.RowCount} content={canvas.ContentHeight}");
         Save(canvas, full, Path.Combine(outDir, "popup_full.png"));
+        report.AppendLine(PopupCanvas.OpaqueTintContrast());
 
         SaveGlass(canvas, full, Path.Combine(outDir, "popup_glass_sim.png"), report);
 
@@ -134,10 +135,12 @@ internal static class RenderHarness
             under.G + (veil.G - under.G) * alpha / 255, under.B + (veil.B - under.B) * alpha / 255);
         var texts = new (string name, Color color, string on)[]
         {
-            ("text", Theme.Text, "pane card tint-soft tint-strong"), ("muted", Theme.PMuted, "pane card tint-soft tint-strong"),
-            ("faint", Theme.PFaint, "pane card"), ("ok", Theme.Ok, "pane card tint-soft tint-strong"),
-            ("warn", Theme.PWarn, "card tint-soft tint-strong"), ("crit", Theme.PCrit, "card tint-soft tint-strong"),
-            ("stale", Theme.PStale, "card")
+            ("text", Theme.Text, "pane card tint-soft tint-strong tint-blocked"),
+            ("muted", Theme.PMuted, "pane card tint-soft tint-strong tint-blocked"),
+            ("faint", Theme.PFaint, "pane card tint-blocked"), ("ok", Theme.Ok, "pane card tint-soft tint-strong"),
+            ("warn", Theme.PWarn, "card tint-soft tint-strong tint-blocked"),
+            ("crit", Theme.PCrit, "card tint-soft tint-strong tint-blocked"),
+            ("stale", Theme.PStale, "card tint-blocked") // a blocked account whose latest poll failed
         };
         foreach (var luminance in new[] { 0.01, 0.10, 0.35, 1.0 })
         {
@@ -147,7 +150,8 @@ internal static class RenderHarness
             {
                 ("pane", Theme.Bg, Glass.PaneAlpha), ("card", Theme.Card, Glass.CardAlpha),
                 ("tint-soft", Over(20, Theme.Warn, Theme.Card), Glass.TintSoftAlpha),
-                ("tint-strong", Over(30, Theme.Warn, Theme.Card), Glass.TintStrongAlpha)
+                ("tint-strong", Over(30, Theme.Warn, Theme.Card), Glass.TintStrongAlpha),
+                ("tint-blocked", Over(40, Theme.Crit, Theme.Card), Glass.TintBlockedAlpha)
             };
             var weak = new List<string>();
             var min = double.MaxValue;
@@ -165,7 +169,7 @@ internal static class RenderHarness
                 }
             }
             report.AppendLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"glass over luminance {luminance:0.00} (grey {grey:0}): opacity pane/card/soft/strong={Glass.PaneAlpha:0.00}/{Glass.CardAlpha:0.00}/{Glass.TintSoftAlpha:0.00}/{Glass.TintStrongAlpha:0.00} min contrast={min:0.00} below limit=[{string.Join(", ", weak)}] (expect none)"));
+                $"glass over luminance {luminance:0.00} (grey {grey:0}): opacity pane/card/soft/strong/blocked={Glass.PaneAlpha:0.00}/{Glass.CardAlpha:0.00}/{Glass.TintSoftAlpha:0.00}/{Glass.TintStrongAlpha:0.00}/{Glass.TintBlockedAlpha:0.00} min contrast={min:0.00} below limit=[{string.Join(", ", weak)}] (expect none)"));
         }
         canvas.GlassAlphasChanged();
         canvas.GlassActive = solid;

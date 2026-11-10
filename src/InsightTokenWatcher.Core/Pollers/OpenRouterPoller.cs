@@ -82,15 +82,20 @@ public sealed class OpenRouterPoller : IAccountPoller
                     var credits = ProviderInfo.JsonDouble(d, "total_credits");
                     var usage = ProviderInfo.JsonDouble(d, "total_usage");
                     if (credits is not null && usage is not null)
+                    {
+                        var left = Math.Round(credits.Value - usage.Value, 2);
                         snap.Windows.Add(new QuotaWindow
                         {
                             Key = "balance",
                             Label = "Guthaben",
                             IsBalance = true,
-                            Remaining = Math.Round(credits.Value - usage.Value, 2),
+                            Remaining = left,
+                            // prepaid: without credits every paid model answers 402
+                            Unusable = left <= 0,
                             Unit = "USD",
                             Note = $"Gekauft {Formatting.Money(credits, "USD")} · Verbraucht {Formatting.Money(usage, "USD")}"
                         });
+                    }
                 }
                 // an unexpected shape (no "data") used to escape as KeyNotFoundException and
                 // throw away the key data from step 1

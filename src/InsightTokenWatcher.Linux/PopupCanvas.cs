@@ -21,14 +21,35 @@ internal sealed class PopupCanvas : Control
     public double LogicalWidth => _modelScope is null ? 480 : 560;
 
     private const double TitleH = 58, LegendH = 19, ColumnsH = 26, FooterH = 28;
-    private const double RowBase = 48, RowGap = 4, LineH = 19;
+    private const double RowBase = 48, RowGap = 4, LineH = 19, SectionH = 22;
     private const double OuterX = 8, CardPadX = 12, NameW = 128, NameGap = 12, CellGap = 16, ModelW = 92;
     private const double BodyPadTop = 0, BodyPadBottom = 8, ButtonSize = 28;
     private const string ShortColumn = "5 h";
     private const string LongColumn = "Woche";
 
     private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header, SortName, SortShort, SortLong, SortModel }
-    private enum RowState { Ok, Warn, Crit, Error, Stale, Pending }
+    // Crit = runs dry before its reset (a forecast, the account still works);
+    // Blocked = cannot be used right now (Usability.Blocked)
+    private enum RowState { Ok, Warn, Crit, Blocked, Error, Stale, Pending }
+
+    /// <summary>Text tones on a row's card: a tinted card takes the brighter ones (see Ui).</summary>
+    private readonly record struct Tones(IBrush Faint, IBrush Old, IBrush Crit)
+    {
+        private static readonly Tones Card = new(Ui.FaintBrush, Ui.StaleBrush, Ui.CritBrush);
+        private static readonly Tones Tint = new(Ui.FaintOnTintBrush, Ui.StaleOnTintBrush, Ui.CritOnTintBrush);
+
+        public static Tones For(RowState state) => TintFor(state) is null ? Card : Tint;
+    }
+
+    /// <summary>Overlay on the card: red = cannot be used right now, amber = a forecast or an error
+    /// (stronger the more urgent), none = nothing to report.</summary>
+    private static IBrush? TintFor(RowState state) => state switch
+    {
+        RowState.Blocked => Ui.TintBlockedBrush,
+        RowState.Crit or RowState.Error => Ui.TintStrongBrush,
+        RowState.Warn => Ui.TintSoftBrush,
+        _ => null
+    };
 
     private readonly record struct Row(AccountView View, RowState State, double Y, double H, string Sub, IBrush SubBrush,
         RowLayout Layout, List<(string text, IBrush brush)> Notes);
@@ -36,6 +57,7 @@ internal sealed class PopupCanvas : Control
     private readonly List<Row> _rows = new();
     private string? _modelScope;   // model family of the third column ("Fable"); null = no such column
     private bool _hasPace;         // a bar carries a pace tick → the legend row is shown
+    private double _sectionY = -1; // caption above the blocked accounts (content coordinates); -1 = none
 
     /// <summary>Title, summary and – with pace ticks – the legend; the column titles follow.</summary>
     private double TitleBandH => TitleH + (_hasPace ? LegendH : 0);
@@ -117,6 +139,7 @@ internal sealed class PopupCanvas : Control
         _now = DateTimeOffset.Now;
         var hovered = _hoverRow >= 0 && _hoverRow < _rows.Count ? _rows[_hoverRow].View.Config.Id : (Guid?)null;
         _rows.Clear();
+        _sectionY = -1;
         _modelScope = WindowLayout.ColumnScope(views);
         var utcNow = DateTimeOffset.UtcNow;
         _hasPace = false;
@@ -126,28 +149,37 @@ internal sealed class PopupCanvas : Control
             var layout = v.Display is { } snap ? WindowLayout.Classify(snap.Windows, _modelScope) : new RowLayout();
             _hasPace |= new[] { layout.Short, layout.Long, layout.Model }.Any(w =>
                 w is not null && WindowLayout.ElapsedFraction(w, utcNow) is not null);
-            var (state, error) = Classify(v);
+            var block = Usability.Blocked(v, utcNow);
+            var (state, error) = Classify(v, block);
             var (sub, subBrush) = Status(v, state, layout);
+            var tones = Tones.For(state);
             var notes = new List<(string text, IBrush brush)>();
-            // old values raise no alarms (as on Windows) – the note below says why they are old
+            // old values raise no alarms (as on Windows) – the note below says why they are old.
+            // Red only for what blocks the account right now; a forecast is amber.
             if (!v.IsStale)
-                foreach (var line in WarnLines(v))
-                    notes.Add((line.text, line.crit ? Ui.CritBrush : Ui.WarnBrush));
+                foreach (var line in WarnLines(v, block))
+                    notes.Add((line.text, line.blocks ? tones.Crit : Ui.WarnBrush));
             // windows without a column of their own (e.g. a second model limit)
             foreach (var w in layout.Extras.Where(w => !w.IsBalance && !w.IsInfoOnly))
                 notes.Add((ExtraLine(w, utcNow), Ui.MutedBrush));
             if (v.Display is { } d)
             {
                 foreach (var w in d.Windows.Where(w => w.IsBalance && !string.IsNullOrEmpty(w.Note)))
-                    notes.Add((w.Note!, Ui.FaintBrush));
+                    notes.Add((w.Note!, tones.Faint));
                 foreach (var w in d.Windows.Where(w => w.IsInfoOnly && !string.IsNullOrEmpty(w.Note)))
-                    notes.Add((w.Note!, Ui.FaintBrush));
+                    notes.Add((w.Note!, tones.Faint));
             }
             if (error is not null)
-                notes.Add((error, !v.IsStale ? Ui.CritBrush
+                notes.Add((error, !v.IsStale ? tones.Crit
                     : v.Failure == FailureKind.AuthExpired ? Ui.MutedBrush
                     : v.Failure == FailureKind.Network ? Ui.WarnBrush
-                    : Ui.CritBrush));
+                    : tones.Crit));
+            // the sort puts the blocked accounts last: a caption sets them apart
+            if (state == RowState.Blocked && _sectionY < 0)
+            {
+                _sectionY = y;
+                y += SectionH;
+            }
             var h = RowBase + (notes.Count > 0 ? notes.Count * LineH + 4 : 0);
             _rows.Add(new Row(v, state, y, h, sub, subBrush, layout, notes));
             y += h + RowGap;
@@ -176,7 +208,7 @@ internal sealed class PopupCanvas : Control
     // ------------------------------------------------------------ classification
 
     /// <summary>Row state as on Windows; <c>error</c> is the note that explains a failed poll.</summary>
-    private static (RowState state, string? error) Classify(AccountView v)
+    private static (RowState state, string? error) Classify(AccountView v, Block? block)
     {
         if (v.Snapshot is { Ok: false } && v.LastGood is null)
             return (RowState.Error, ShortError(v.Snapshot.Error));
@@ -192,11 +224,14 @@ internal sealed class PopupCanvas : Control
             // an expired token gets rotated, a short outage passes – everything else is an error
             var waiting = v.Failure == FailureKind.AuthExpired ||
                           (v.Failure == FailureKind.Network && v.Health != Health.Crit);
-            return (waiting ? RowState.Stale : RowState.Error, why);
+            // a limit that was reached stays reached, even when the latest poll failed
+            return (block is not null ? RowState.Blocked : waiting ? RowState.Stale : RowState.Error, why);
         }
         // no result yet: not "OK"
         if (v.Display is null)
             return (RowState.Pending, null);
+        if (block is not null)
+            return (RowState.Blocked, null);
         return (v.Health switch
         {
             Health.Crit => RowState.Crit,
@@ -206,15 +241,18 @@ internal sealed class PopupCanvas : Control
     }
 
     /// <summary>Second line of the row. A healthy row stays quiet (what kind of account it is, in
-    /// grey); only exceptions get a coloured word, and a model limit names itself.</summary>
+    /// grey); only exceptions get a coloured word, and a model limit names itself. Colour rule
+    /// (10.11.2026): red means "cannot be used right now"; a forecast – tight, runs dry before
+    /// its reset – is amber.</summary>
     private static (string text, IBrush brush) Status(AccountView v, RowState state, RowLayout layout) => state switch
     {
         RowState.Ok => (WindowLayout.Subline(v.Config, layout), Ui.FaintBrush),
         RowState.Warn => (WindowLayout.ModelLimitBehind(v) is { } limit
             ? WindowLayout.ModelLimitStatus(limit)
             : "KNAPP", Ui.WarnBrush),
-        RowState.Crit => ("KRITISCH", Ui.CritBrush),
-        RowState.Error => ("FEHLER", Ui.CritBrush),
+        RowState.Crit => ("LÄUFT LEER", Ui.WarnBrush),
+        RowState.Blocked => ("GESPERRT", Tones.For(state).Crit),
+        RowState.Error => ("FEHLER", Tones.For(state).Crit),
         RowState.Stale => v.Failure == FailureKind.AuthExpired
             ? ("Token abgelaufen", Ui.MutedBrush)
             : ("offline", Ui.WarnBrush),
@@ -231,9 +269,10 @@ internal sealed class PopupCanvas : Control
         return e.Length > 70 ? e[..70] + "…" : e;
     }
 
-    private static List<(string text, bool crit)> WarnLines(AccountView v)
+    /// <summary><c>blocks</c>: the line names a limit that keeps the account from working right now.</summary>
+    private static List<(string text, bool blocks)> WarnLines(AccountView v, Block? block)
     {
-        var lines = new List<(string text, bool crit, bool scoped)>();
+        var lines = new List<(string text, bool crit, bool scoped, bool blocks)>();
         if (v.Display is null) return new List<(string, bool)>();
         var now = DateTimeOffset.Now;
         foreach (var w in v.Display.Windows.Where(w => !w.IsBalance && !w.IsInfoOnly))
@@ -243,11 +282,14 @@ internal sealed class PopupCanvas : Control
             var crit = ev.Health is Health.Crit || w.UsedFraction is >= 0.999;
             var warn = ev.Health is Health.Warn;
             if (!crit && !warn) continue;
-            lines.Add(($"{WindowLayout.ShortLabel(w)}: {VerdictFor(w, ev, now)}", crit, w.Scope is not null));
+            var blocks = block is not null && w.UsedFraction is >= 0.999 &&
+                         (w.Scope is null || ReferenceEquals(w, block.Window));
+            lines.Add(($"{WindowLayout.ShortLabel(w)}: {VerdictFor(w, ev, now)}", crit, w.Scope is not null, blocks));
         }
-        // room for two lines: the general windows (they decide the status) before model
-        // limits, the most critical first
-        return lines.OrderBy(l => l.scoped).ThenByDescending(l => l.crit).Take(2).Select(l => (l.text, l.crit)).ToList();
+        // room for two lines: what blocks the account first, then the general windows (they
+        // decide the status) before model limits, the most critical first
+        return lines.OrderByDescending(l => l.blocks).ThenBy(l => l.scoped).ThenByDescending(l => l.crit).Take(2)
+            .Select(l => (l.text, l.blocks)).ToList();
     }
 
     private static string VerdictFor(QuotaWindow w, WindowEvaluation ev, DateTimeOffset now)
@@ -365,6 +407,7 @@ internal sealed class PopupCanvas : Control
                 if (y > body.Bottom || y + _rows[i].H < body.Top) continue;
                 DrawRow(g, _rows[i], y, w, i == _hoverRow && _hover == Zone.Row);
             }
+            if (_sectionY >= 0) DrawSection(g, top + _sectionY, w);
         }
         DrawScrollbar(g, body);
         DrawFooter(g, w);
@@ -431,15 +474,27 @@ internal sealed class PopupCanvas : Control
         g.DrawImage(GlyphBitmap(glyph, hover ? Ui.Text : color), r.Deflate(4.5));
     }
 
+    /// <summary>Caption above the accounts that cannot be used right now. It sits closer to its
+    /// cards than to the row above.</summary>
+    private void DrawSection(DrawingContext g, double y, double w)
+    {
+        var tl = new TextLayout($"NICHT NUTZBAR · {_rows.Count(r => r.State == RowState.Blocked)}",
+            new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.SemiBold), Ui.FCaps, Ui.FaintBrush);
+        tl.Draw(g, new Point(NameX, y + 7));
+        var ly = Math.Round(y + 7 + tl.Height / 2) + 0.5;
+        g.DrawLine(Ui.SectionPen, new Point(NameX + tl.Width + 8, ly), new Point(w - OuterX, ly));
+    }
+
     /// <summary>"13 Konten" plus one entry per state that occurs: a coloured dot carries the
     /// state, the text stays grey. Entries that would not fit the width are left out,
     /// least urgent first.</summary>
     private void DrawSummary(DrawingContext g, double x, double y, double limit)
     {
-        int crit = 0, errors = 0, warn = 0, stale = 0, ok = 0;
+        int blocked = 0, crit = 0, errors = 0, warn = 0, stale = 0, ok = 0;
         foreach (var r in _rows)
             switch (r.State)
             {
+                case RowState.Blocked: blocked++; break;
                 case RowState.Crit: crit++; break;
                 case RowState.Error: errors++; break;
                 case RowState.Warn: warn++; break;
@@ -453,8 +508,9 @@ internal sealed class PopupCanvas : Control
         cx += total.Width;
 
         var parts = new List<(string text, IBrush dot)>();
-        if (crit > 0) parts.Add(($"{crit} kritisch", Ui.CritBrush));
+        if (blocked > 0) parts.Add(($"{blocked} gesperrt", Ui.CritBrush));
         if (errors > 0) parts.Add(($"{errors} Fehler", Ui.CritBrush));
+        if (crit > 0) parts.Add((crit == 1 ? "1 läuft leer" : $"{crit} laufen leer", Ui.WarnBrush));
         if (warn > 0) parts.Add(($"{warn} knapp", Ui.WarnBrush));
         if (stale > 0) parts.Add(($"{stale} veraltet", Ui.StaleBrush));
         if (ok > 0) parts.Add(($"{ok} OK", Ui.OkBrush));
@@ -522,19 +578,13 @@ internal sealed class PopupCanvas : Control
     }
 
     /// <summary>One account = one card. Every row has the same shape; a problem only changes the
-    /// tint (amber also for critical/error – red stays for text and bars).</summary>
+    /// tint: amber for forecasts and errors, red for an account that cannot be used right now.</summary>
     private void DrawRow(DrawingContext g, Row row, double top, double w, bool hover)
     {
         var v = row.View;
         var card = new Rect(OuterX, top, w - 2 * OuterX, row.H);
         g.DrawRectangle(Ui.CardBrush, null, card, 8, 8);
-        var tint = row.State switch
-        {
-            RowState.Crit or RowState.Error => Ui.TintStrongBrush,
-            RowState.Warn => Ui.TintSoftBrush,
-            _ => null
-        };
-        if (tint is not null) g.DrawRectangle(tint, null, card, 8, 8);
+        if (TintFor(row.State) is { } tint) g.DrawRectangle(tint, null, card, 8, 8);
         if (hover) g.DrawRectangle(Ui.HoverOverlayBrush, null, card, 8, 8);
 
         // name + second line (provider, or the state when something is wrong)
@@ -553,15 +603,16 @@ internal sealed class PopupCanvas : Control
         }
         else if (layout.Span is { } span)
         {
-            DrawSpanCells(g, span, v, top, x1, x2, cw, w - NameX - x2);
+            DrawSpanCells(g, span, v, top, x1, x2, cw, w - NameX - x2, Tones.For(row.State));
         }
         else
         {
-            DrawQuotaCell(g, layout.Short, v, x1, top, cw, ShortColumn);
-            DrawQuotaCell(g, layout.Long, v, x2, top, cw, LongColumn);
+            var tones = Tones.For(row.State);
+            DrawQuotaCell(g, layout.Short, v, x1, top, cw, ShortColumn, tones);
+            DrawQuotaCell(g, layout.Long, v, x2, top, cw, LongColumn, tones);
             // an account without a model limit (other provider, API key) leaves the cell empty
             if (mw > 0 && layout.Model is { } model)
-                DrawQuotaCell(g, model, v, x3, top, mw, _modelScope!, layout.Long);
+                DrawQuotaCell(g, model, v, x3, top, mw, _modelScope!, tones, layout.Long);
         }
 
         var y = top + RowBase - 2;
@@ -577,18 +628,18 @@ internal sealed class PopupCanvas : Control
     /// countdown is left out when it would repeat that window's (the Fable week resets with
     /// the general week).</summary>
     private void DrawQuotaCell(DrawingContext g, QuotaWindow? win, AccountView v, double x, double top, double cw,
-        string column, QuotaWindow? sameResetAs = null)
+        string column, Tones tones, QuotaWindow? sameResetAs = null)
     {
         if (win is null)
         {
-            Tl(g, "—", Ui.FSmall, Ui.FaintBrush, cw, 16, FontWeight.Normal, new Point(x, top + 9));
+            Tl(g, "—", Ui.FSmall, tones.Faint, cw, 16, FontWeight.Normal, new Point(x, top + 9));
             return;
         }
         // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
         // lime = unused (0 %); old values grey – forecast health does not drive the bar colour
         var frac = win.UsedFraction ?? 0;
         var barBrush = v.IsStale ? Ui.StaleBrush : frac >= 0.999 ? Ui.CritBrush : frac > 0 ? Ui.WarnBrush : Ui.OkBrush;
-        var valueBrush = v.IsStale ? Ui.StaleBrush : frac >= 0.999 ? Ui.CritBrush : frac > 0 ? Ui.WarnBrush : Ui.TextBrush;
+        var valueBrush = v.IsStale ? tones.Old : frac >= 0.999 ? tones.Crit : frac > 0 ? Ui.WarnBrush : Ui.TextBrush;
 
         var value = new TextLayout(Formatting.PercentShort(win.UsedFraction),
             new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.SemiBold), Ui.FValue, valueBrush);
@@ -621,7 +672,7 @@ internal sealed class PopupCanvas : Control
         {
             var lx = x + value.Width + 8;
             if (right - lx > 16)
-                Tl(g, label, Ui.FTiny, Ui.FaintBrush, right - lx - 4, 15, FontWeight.Normal, new Point(lx, top + 10));
+                Tl(g, label, Ui.FTiny, tones.Faint, right - lx - 4, 15, FontWeight.Normal, new Point(lx, top + 10));
         }
 
         var bar = new Rect(x, top + 32, cw, 6);
@@ -673,46 +724,46 @@ internal sealed class PopupCanvas : Control
     /// <summary>Balance/info accounts use the first two cells: amount | runway. The caption
     /// follows its value ("23,42 $ Guthaben", "~27 d 3 h Reichweite").</summary>
     private void DrawSpanCells(DrawingContext g, QuotaWindow span, AccountView v, double top, double x1, double x2, double cw,
-        double restWidth)
+        double restWidth, Tones tones)
     {
         v.Evals.TryGetValue(span.Key, out var ev);
         var amount = span.Remaining is null ? "–" : Formatting.Money(span.Remaining, span.Unit);
-        ValueWithCaption(g, amount, v.IsStale ? Ui.StaleBrush : Ui.TextBrush, span.IsInfoOnly ? span.Label : "Guthaben",
-            x1, x2 - 6, top);
+        ValueWithCaption(g, amount, v.IsStale ? tones.Old : Ui.TextBrush, span.IsInfoOnly ? span.Label : "Guthaben",
+            tones.Faint, x1, x2 - 6, top);
 
         if (span.IsInfoOnly)
         {
-            Tl(g, "—", Ui.FSmall, Ui.FaintBrush, cw, 16, FontWeight.Normal, new Point(x2, top + 9));
+            Tl(g, "—", Ui.FSmall, tones.Faint, cw, 16, FontWeight.Normal, new Point(x2, top + 9));
             return;
         }
 
-        // only a measured rate gives a runway, counted down live since the snapshot and coloured
-        // by the forecast (amber < 2 d, red < 12 h); grey when the values are old
+        // only a measured rate gives a runway, counted down live since the snapshot; amber when
+        // the forecast is tight (< 2 d), grey when the values are old
         var runway = "—";
-        var runwayBrush = Ui.FaintBrush;
+        var runwayBrush = tones.Faint;
         if (ev is { HasRate: true, TimeToEmpty: { } tte })
         {
             var left = tte - (DateTimeOffset.UtcNow - (v.Display?.AtUtc ?? DateTimeOffset.UtcNow));
             runway = "~" + Formatting.Span(left < TimeSpan.Zero ? TimeSpan.Zero : left);
-            runwayBrush = v.IsStale ? Ui.StaleBrush
-                : ev.Health is Health.Warn or Health.Crit ? Ui.ForHealthBrush(ev.Health)
+            runwayBrush = v.IsStale ? tones.Old
+                : ev.Health is Health.Warn or Health.Crit ? Ui.WarnBrush
                 : Ui.TextBrush;
         }
-        ValueWithCaption(g, runway, runwayBrush, "Reichweite", x2, x2 + restWidth, top);
+        ValueWithCaption(g, runway, runwayBrush, "Reichweite", tones.Faint, x2, x2 + restWidth, top);
         // may run into the (empty) model cell – the text can be longer than one cell
-        Tl(g, ev is { HasRate: true } ? "bei aktuellem Verbrauch" : "kein Verbrauch", Ui.FTiny, Ui.FaintBrush,
+        Tl(g, ev is { HasRate: true } ? "bei aktuellem Verbrauch" : "kein Verbrauch", Ui.FTiny, tones.Faint,
             restWidth, 15, FontWeight.Normal, new Point(x2, top + 27));
     }
 
     /// <summary>Value in the value font, its caption small and grey right behind it (left out
     /// when it would pass <paramref name="limitRight"/>).</summary>
-    private static void ValueWithCaption(DrawingContext g, string value, IBrush brush, string caption, double x,
-        double limitRight, double top)
+    private static void ValueWithCaption(DrawingContext g, string value, IBrush brush, string caption, IBrush captionBrush,
+        double x, double limitRight, double top)
     {
         var tl = new TextLayout(value, new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.SemiBold),
             Ui.FValue, brush);
         tl.Draw(g, new Point(x, top + 4));
-        var cap = Layout(caption, Ui.FTiny, Ui.FaintBrush);
+        var cap = Layout(caption, Ui.FTiny, captionBrush);
         var cx = x + tl.Width + 7;
         if (cx + cap.Width <= limitRight) cap.Draw(g, new Point(cx, top + 10));
     }
@@ -802,10 +853,11 @@ internal sealed class PopupCanvas : Control
                 if (WindowLayout.ElapsedFraction(w, now) is { } elapsed)
                     sb.Append($" · Fenster zu {elapsed * 100:0} % um");
             }
-        var (_, error) = Classify(v);
+        var block = Usability.Blocked(v, now);
+        var (_, error) = Classify(v, block);
         if (error is not null) sb.Append("\n⚠ ").Append(error);
         if (!v.IsStale)
-            foreach (var line in WarnLines(v))
+            foreach (var line in WarnLines(v, block))
                 sb.Append("\n⚠ ").Append(line.text);
         sb.Append("\nKlick = jetzt neu messen");
         return sb.ToString();

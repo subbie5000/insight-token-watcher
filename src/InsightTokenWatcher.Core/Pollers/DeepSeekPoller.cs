@@ -56,6 +56,7 @@ public sealed class DeepSeekPoller : IAccountPoller
                 IsBalance = true,
                 Remaining = total,
                 Unit = cur,
+                Unusable = !isAvailable,
                 Note = note
             });
             return snap;

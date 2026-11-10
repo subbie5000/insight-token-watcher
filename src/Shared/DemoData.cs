@@ -41,6 +41,9 @@ internal static class DemoData
                 W("c2", "Wochen-Kontingent", 10080, 0.563, now.AddHours(94), 0.00005, total: 140000, note: "Plan: max")),
             Balance("DeepSeek", ProviderKind.DeepSeek, now, 23.42, 0.0006, "Bezahlt 23,42 $ · Gratis 0,00 $"),
             BalanceWithExtra("OpenRouter", ProviderKind.OpenRouter, now, 0.59, "Gekauft 10,00 $ · Verbraucht 9,41 $"),
+            // prepaid balance used up: cannot be used until it is topped up
+            Balance("Moonshot", ProviderKind.Moonshot, now, -0.01, 0, "Defizit -0,01 $ · Gutschein 0,00 $ · Bar -0,01 $",
+                unusable: true),
             Error("Groq", ProviderKind.GenericOpenAi,
                 "HTTP 401 – keine x-ratelimit-*-Header. {\"error\":{\"message\":\"Invalid API Key\"}}")
         };
@@ -128,11 +131,12 @@ internal static class DemoData
     }
 
     private static AccountView Balance(string name, ProviderKind p, DateTimeOffset now, double amount, double ratePerMin,
-        string note)
+        string note, bool unusable = false)
     {
         var w = new QuotaWindow
         {
-            Key = "balance", Label = "Guthaben", IsBalance = true, Remaining = amount, Unit = "USD", Note = note
+            Key = "balance", Label = "Guthaben", IsBalance = true, Remaining = amount, Unit = "USD", Note = note,
+            Unusable = unusable
         };
         Rates[w] = ratePerMin;
         return Quota(name, p, now, w);

@@ -55,6 +55,8 @@ public sealed class MoonshotPoller : IAccountPoller
                         Label = "Guthaben",
                         IsBalance = true,
                         Remaining = available,
+                        // prepaid: at or below zero the inference API rejects every request
+                        Unusable = available <= 0,
                         Unit = unit,
                         Note = note
                     }

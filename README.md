@@ -86,7 +86,7 @@ crit notifications use `notify-send` when available.
 - **Model limits (Fable):** Claude subscriptions have a separate weekly limit for the
   Fable model. As soon as an account reports one, a third column **FABLE** appears (the
   popup gets wider). A used-up Fable week marks the account amber with the status
-  "FABLE LEER" — never as critical, because every other model still runs on it.
+  "FABLE LEER" — never as blocked, because every other model still runs on it.
 - **Pace tick:** a thin vertical line on every bar marks how much of the window's time has
   passed (a week that resets in two days is 5/7 through). A bar that ends left of the tick is
   below the pace of time. It is the *average* pace since the window started; warnings still
@@ -104,17 +104,20 @@ crit notifications use `notify-send` when available.
 - **Hover a row** for details (all windows, exact reset times, forecasts); **click a
   row** to re-poll that account immediately.
 - **Click a column title** to sort: KONTO by name, 5 STUNDEN / WOCHE / FABLE by *which
-  account runs out first* (blocked and soon-empty accounts on top, then the fullest). Clicking
+  account runs out first* (soon-empty accounts on top, then the fullest). Clicking
   again reverses the order ("zuletzt leer"), a third click restores the default; the
   choice is remembered.
+- **Accounts that cannot be used right now** sit below all others under the caption
+  "NICHT NUTZBAR", whatever the sort order – the one that works again first on top. They
+  carry the status "GESPERRT" and a red card. Red is reserved for this state.
 - **Cell colors** follow usage: lime = unused, amber = in use, red = limit reached,
   grey = stale. Whether an account lasts until its reset is answered by the forecast
-  line and the row tint (amber for tight, critical or failing accounts).
+  line and the row tint (amber for tight, soon-empty or failing accounts).
 - If a poll fails, the last good values stay visible (marked stale) instead of
   being replaced by an error.
 - Tray icon: a ring with the mean weekly usage of your Anthropic accounts and the percent
   in the middle; a corner dot marks accounts with problems.
-- Balloon warning when an account turns critical (can be disabled).
+- Balloon warning when an account starts running dry or gets blocked (can be disabled).
 
 ## How the forecast works
 
@@ -125,10 +128,16 @@ time-to-empty, which is then compared against the time-to-reset:
 
 - **OK** – time-to-empty > time-to-reset (you make it)
 - **KNAPP** (tight) – less than 15 % margin
-- **KRITISCH** (critical) – the window runs dry before it resets
+- **LÄUFT LEER** (runs dry) – the window runs dry before it resets
 
 Quota resets and balance top-ups are detected and reset the rate calculation.
-Balance accounts without reset: OK > 2 days, tight > 12 h, critical below.
+Balance accounts without reset: OK > 2 days, tight > 12 h, running dry below.
+
+**GESPERRT** (blocked) is not a forecast but a fact about now: a general limit stands at
+100 % until its reset, or a prepaid balance cannot pay for requests (DeepSeek reports
+`is_available: false`; Moonshot and OpenRouter at or below zero). A used-up model limit
+(Fable) does not block the account. Because the forecast extrapolates the last hour, an
+account in heavy use is easily "LÄUFT LEER" – it still works; "GESPERRT" does not.
 
 ## Measurement cost
 

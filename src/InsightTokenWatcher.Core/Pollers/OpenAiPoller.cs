@@ -98,6 +98,7 @@ public sealed class OpenAiPoller : IAccountPoller
                 Key = "balance",
                 Label = "Guthaben (credit_grants)",
                 IsBalance = true,
+                // never marked unusable: an organisation billed by invoice has no grants and still runs
                 Remaining = available,
                 Unit = "USD",
                 Note = $"Gewährt {Formatting.Money(granted, "USD")} · Verbraucht {Formatting.Money(used, "USD")}"

@@ -20,11 +20,15 @@ public enum SortColumn
 /// <summary>
 /// Popup order by column. Names sort naturally ("Anthropic 2" before "Anthropic 10").
 /// The window columns answer "which account runs out first": accounts projected to run dry
-/// within the column's horizon come first – a quota window before its reset (blocked ones at
-/// the very top), a balance whose runway ends within 5 h / a week – soonest first. Then the
-/// accounts that make it, fullest first (balances that last count as free capacity). Rows
-/// without data for the column (errors, loading, info-only, missing window) always stay at
-/// the end in default order. Descending flips everything except that tail.
+/// within the column's horizon come first – a quota window before its reset, a balance whose
+/// runway ends within 5 h / a week – soonest first. Then the accounts that make it, fullest
+/// first (balances that last count as free capacity). Rows without data for the column
+/// (errors, loading, info-only, missing window) stay at the end in default order. Descending
+/// flips everything except that tail.
+///
+/// Whatever the column and direction: accounts that cannot be used right now
+/// (<see cref="Usability.Blocked"/>) go below all others (10.11.2026) – the one that works
+/// again first on top, those without a known time (empty balance) last.
 /// </summary>
 public static class AccountSort
 {
@@ -43,7 +47,18 @@ public static class AccountSort
     public static List<AccountView> Apply(IEnumerable<AccountView> views, SortColumn column, bool descending,
         DateTimeOffset now)
     {
-        var list = views.ToList();
+        // both sorts are stable: within each group the column order is kept
+        return ByColumn(views.ToList(), column, descending, now)
+            .Select(v => (view: v, block: Usability.Blocked(v, now)))
+            .OrderBy(x => x.block is null ? 0 : x.block.FreeAtUtc is null ? 2 : 1)
+            .ThenBy(x => x.block?.FreeAtUtc ?? DateTimeOffset.MinValue)
+            .Select(x => x.view)
+            .ToList();
+    }
+
+    private static List<AccountView> ByColumn(List<AccountView> list, SortColumn column, bool descending,
+        DateTimeOffset now)
+    {
         switch (column)
         {
             case SortColumn.Name:
@@ -67,7 +82,7 @@ public static class AccountSort
     }
 
     /// <summary>
-    /// Group 0 = runs dry within the column's horizon; Value = minutes until empty (0 = blocked now).
+    /// Group 0 = runs dry within the column's horizon; Value = minutes until empty (0 = limit reached).
     /// Group 1 = makes it (reset first, no consumption measured, or a long runway); Value = −used
     /// fraction (balances: 0, i.e. free capacity).
     /// Group 2 = no data for this column.

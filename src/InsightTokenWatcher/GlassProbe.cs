@@ -151,7 +151,7 @@ internal static class GlassProbe
             shot = "screenshot ok";
         }
         var alphas = string.Create(CultureInfo.InvariantCulture,
-            $"luminance={Glass.BackdropLuminance:0.000} alphas={Glass.PaneAlpha:0.00}/{Glass.CardAlpha:0.00}/{Glass.TintSoftAlpha:0.00}/{Glass.TintStrongAlpha:0.00}");
+            $"luminance={Glass.BackdropLuminance:0.000} alphas={Glass.PaneAlpha:0.00}/{Glass.CardAlpha:0.00}/{Glass.TintSoftAlpha:0.00}/{Glass.TintStrongAlpha:0.00}/{Glass.TintBlockedAlpha:0.00}");
         var info = $"{shot}; {alphas}; {popup.GlassLog} glassActive={popup.Canvas.GlassActive} popup={popup.Bounds} " +
                    $"backdrop={back.Bounds} visible={IsWindowVisible(back.Handle)} paints={back.Paints} " +
                    $"foreground={(GetForegroundWindow() == popup.Handle ? "popup" : "other")}";
