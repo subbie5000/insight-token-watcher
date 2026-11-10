@@ -9,6 +9,10 @@ public sealed class AppSettings
     public bool Autostart { get; set; }
     public int BurnWindowMinutes { get; set; } = 60;
 
+    /// <summary>Translucent popup over the blurred desktop, where the system supports it
+    /// (Windows 11 22H2+ with transparency effects on); otherwise the opaque look.</summary>
+    public bool Glass { get; set; } = true;
+
     /// <summary>Position where the user parked the popup by dragging it (null = near the tray).</summary>
     public int? PopupX { get; set; }
     public int? PopupY { get; set; }

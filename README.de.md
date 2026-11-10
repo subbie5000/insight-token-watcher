@@ -77,6 +77,19 @@ kommen über `notify-send`, sofern installiert.
   ein Konto eins meldet, erscheint eine dritte Spalte **FABLE** (das Popup wird breiter).
   Ist die Fable-Woche aufgebraucht, wird das Konto amber markiert und trägt den Status
   „FABLE LEER“ – nie „KRITISCH“, weil alle anderen Modelle dort weiterlaufen.
+- **Tempo-Strich:** Ein dünner senkrechter Strich auf jedem Balken zeigt, wie viel Zeit des
+  Fensters schon um ist (eine Woche, die in zwei Tagen zurückgesetzt wird, ist zu 5/7 um).
+  Endet der Balken links vom Strich, liegt der Verbrauch unter dem Zeitanteil. Das ist das
+  *durchschnittliche* Tempo seit Fensterbeginn; Warnungen kommen weiterhin aus der Prognose
+  (Verbrauch der letzten Stunde) – beide können sich widersprechen, etwa bei viel Verbrauch
+  am Wochenanfang und keinem mehr seither. Mouse-over zeigt den genauen Anteil.
+- **Glas (Windows 11 22H2+):** Das Popup liegt als durchscheinende Scheibe über dem
+  verschwommenen Desktop. Die Deckkraft folgt der Helligkeit dahinter – über dunklem Desktop
+  deutlich durchscheinend, über einem weißen Fenster fast deckend –, damit Text mindestens
+  4,5:1 Kontrast behält. Dafür liest die App etwa einmal pro Sekunde die Helligkeit des
+  Bildschirms rund um das Popup (eine Zahl; die Pixel werden nicht aufbewahrt). Abschaltbar
+  unter *Einstellungen → Popup als Glas*; ohne Transparenzeffekte, im Hochkontrast-Modus und
+  in Remote-Sitzungen bleibt das Popup ohnehin deckend.
 - **Klick auf einen Spaltenkopf** sortiert: KONTO nach Name, 5 STUNDEN / WOCHE / FABLE danach,
   *welches Konto zuerst leer ist* (gesperrte und bald leere oben, dann die vollsten).
   Zweiter Klick dreht die Reihenfolge um („zuletzt leer“), dritter Klick stellt den

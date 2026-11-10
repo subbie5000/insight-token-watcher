@@ -16,7 +16,7 @@ internal sealed class PopupCanvas : Control
     /// <summary>Logical width: wider once the model column is shown.</summary>
     public float LogicalWidth => _modelScope is null ? 480 : 560;
 
-    private const float TitleH = 58, ColumnsH = 26, HeaderH = TitleH + ColumnsH, FooterH = 28;
+    private const float TitleH = 58, LegendH = 19, ColumnsH = 26, FooterH = 28;
     private const float RowBase = 48, RowGap = 4, VerdictH = 20, ExtraH = 20;
     private const float OuterX = 8, CardPadX = 12, NameW = 128, NameGap = 12, CellGap = 16, ModelW = 92;
     private const float BodyPadTop = 0, BodyPadBottom = 8, ButtonSize = 28;
@@ -45,6 +45,11 @@ internal sealed class PopupCanvas : Control
     private readonly List<RowInfo> _rows = new();
     private IReadOnlyList<AccountView> _views = Array.Empty<AccountView>();
     private string? _modelScope;   // model family of the third column ("Fable"); null = no such column
+    private bool _hasPace;         // a bar carries a pace tick → the legend row is shown
+
+    /// <summary>Title, summary and – with pace ticks – the legend; the column titles follow.</summary>
+    private float TitleBandH => TitleH + (_hasPace ? LegendH : 0);
+    private float HeaderH => TitleBandH + ColumnsH;
     private int _contentH;
     private float _scroll, _scrollTarget;
     private readonly System.Windows.Forms.Timer _anim = new() { Interval = 15 };
@@ -194,6 +199,9 @@ internal sealed class PopupCanvas : Control
             _rows.Add(row);
         }
         _contentH = _rows.Count == 0 ? S(84) : y - S(RowGap) + S(BodyPadTop) + S(BodyPadBottom);
+        _hasPace = _rows.Any(r => r.Kind == RowKind.Data &&
+            new[] { r.Layout.Short, r.Layout.Long, r.Layout.Model }.Any(w => w is not null &&
+                WindowLayout.ElapsedFraction(w, now) is not null));
     }
 
     private static void DescribeStatus(AccountView v, RowInfo row)
@@ -218,16 +226,16 @@ internal sealed class PopupCanvas : Control
         // coloured word – and a model limit names itself ("FABLE LEER") instead of "KNAPP".
         (row.StatusText, row.StatusColor) = row.State switch
         {
-            RowState.Ok => (WindowLayout.Subline(v.Config, row.Layout), Theme.Faint),
+            RowState.Ok => (WindowLayout.Subline(v.Config, row.Layout), Theme.PFaint),
             RowState.Warn => (WindowLayout.ModelLimitBehind(v) is { } limit
                 ? WindowLayout.ModelLimitStatus(limit)
-                : "KNAPP", Theme.Warn),
-            RowState.Crit => ("KRITISCH", Theme.Crit),
-            RowState.Error => ("FEHLER", Theme.Crit),
+                : "KNAPP", Theme.PWarn),
+            RowState.Crit => ("KRITISCH", Theme.PCrit),
+            RowState.Error => ("FEHLER", Theme.PCrit),
             RowState.Stale => v.Failure == FailureKind.AuthExpired
-                ? ("Token abgelaufen", Theme.Muted)
-                : ("offline", Theme.Warn),
-            _ => ("warte …", Theme.Muted)
+                ? ("Token abgelaufen", Theme.PMuted)
+                : ("offline", Theme.PWarn),
+            _ => ("warte …", Theme.PMuted)
         };
     }
 
@@ -246,9 +254,9 @@ internal sealed class PopupCanvas : Control
             var at = v.LastGood!.AtUtc.ToLocalTime();
             return v.Failure switch
             {
-                FailureKind.AuthExpired => ($"Token abgelaufen – letzte Werte von {at:HH:mm}", Theme.Muted),
-                FailureKind.Network => ($"Keine Verbindung – letzte Werte von {at:HH:mm}", Theme.Warn),
-                _ => ($"Abfrage fehlgeschlagen ({ShortError(v.Snapshot?.Error)}) – Werte von {at:HH:mm}", Theme.Crit)
+                FailureKind.AuthExpired => ($"Token abgelaufen – letzte Werte von {at:HH:mm}", Theme.PMuted),
+                FailureKind.Network => ($"Keine Verbindung – letzte Werte von {at:HH:mm}", Theme.PWarn),
+                _ => ($"Abfrage fehlgeschlagen ({ShortError(v.Snapshot?.Error)}) – Werte von {at:HH:mm}", Theme.PCrit)
             };
         }
 
@@ -273,7 +281,7 @@ internal sealed class PopupCanvas : Control
         if (worst is null || worstWin is null) return null;
         var text = LiveVerdict(worstWin, worst, display.AtUtc, now);
         var label = worstWin.IsBalance ? "Guthaben" : WindowLayout.ShortLabel(worstWin);
-        return ($"{label}: {text}", Theme.ForHealth(worst.Health));
+        return ($"{label}: {text}", Theme.PForHealth(worst.Health));
     }
 
     private static string LiveVerdict(QuotaWindow w, WindowEvaluation ev, DateTimeOffset snapAt, DateTimeOffset now)
@@ -360,7 +368,7 @@ internal sealed class PopupCanvas : Control
         if (settings.Contains(p)) return Zone.Settings;
 
         var body = BodyRect(ClientSize);
-        if (p.Y >= S(TitleH) && p.Y < S(HeaderH)) // column titles: click sorts
+        if (p.Y >= S(TitleBandH) && p.Y < S(HeaderH)) // column titles: click sorts
         {
             var (x1, x2, x3, _, mw) = Columns(ClientSize.Width);
             var half = S(CellGap) / 2;
@@ -383,7 +391,117 @@ internal sealed class PopupCanvas : Control
 
     // ================================================================== painting
 
-    protected override void OnPaint(PaintEventArgs e) => Render(e.Graphics, ClientSize);
+    // overlays on a card: amber tint for problem rows (the base amber on purpose – the tint
+    // must not change with the glass palette), a white veil for the hovered row
+    private static readonly Color TintStrong = Color.FromArgb(30, Theme.Warn);
+    private static readonly Color TintSoft = Color.FromArgb(20, Theme.Warn);
+    private static readonly Color HoverVeil = Color.FromArgb(14, 255, 255, 255);
+    private static readonly Color GlassEdge = Color.FromArgb(22, 255, 255, 255); // light rim of a card on glass
+
+    private bool _glass;
+    private GlassSurface? _surface;
+
+    private static Color Over(Color veil, Color under) => Color.FromArgb(
+        under.R + (veil.R - under.R) * veil.A / 255, under.G + (veil.G - under.G) * veil.A / 255,
+        under.B + (veil.B - under.B) * veil.A / 255);
+
+    /// <summary>Every surface colour the popup paints, with its opacity on glass.</summary>
+    private static GlassSurface NewSurface()
+    {
+        var soft = Over(TintSoft, Theme.Card);
+        var strong = Over(TintStrong, Theme.Card);
+        return new GlassSurface(new[]
+        {
+            // neutral: shadow → pane → card → hovered card / button → bar track
+            new (Color, float)[]
+            {
+                (Color.Black, Glass.PaneAlpha), (Theme.Bg, Glass.PaneAlpha), (Theme.Card, Glass.CardAlpha),
+                (Over(HoverVeil, Theme.Card), Glass.CardAlpha), (Theme.TrackOnCard, Glass.CardAlpha)
+            },
+            // warm: pane → tinted cards → hovered tinted card
+            new (Color, float)[]
+            {
+                (Theme.Bg, Glass.PaneAlpha), (soft, Glass.TintSoftAlpha), (strong, Glass.TintStrongAlpha),
+                (Over(HoverVeil, strong), Glass.TintStrongAlpha)
+            }
+        });
+    }
+
+    /// <summary>Translucent surfaces over the DWM backdrop (set by the form once the backdrop is on).</summary>
+    public bool GlassActive
+    {
+        get => _glass;
+        set
+        {
+            _glass = value;
+            Theme.GlassPalette = value;
+            // the glass path brings its own buffer and must reach the window DC unaltered
+            SetStyle(ControlStyles.OptimizedDoubleBuffer, !value);
+            BuildRows(); // status colours are part of the rows
+            Invalidate();
+        }
+    }
+
+    /// <summary>The opacities changed (brighter or darker desktop behind the popup): new alpha table.</summary>
+    public void GlassAlphasChanged()
+    {
+        _surface?.Dispose();
+        _surface = null;
+        if (_glass) Invalidate();
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        if (!_glass) base.OnPaintBackground(e); // glass: an opaque erase would flash before the frame
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (!_glass || ClientSize.Width <= 0 || ClientSize.Height <= 0)
+        {
+            Render(e.Graphics, ClientSize);
+            return;
+        }
+        _surface ??= NewSurface();
+        using (var g = _surface.Begin(ClientSize))
+            Render(g, ClientSize);
+        var hdc = e.Graphics.GetHdc();
+        try
+        {
+            _surface.Present(hdc);
+        }
+        finally
+        {
+            e.Graphics.ReleaseHdc(hdc);
+        }
+    }
+
+    /// <summary>The glass frame as premultiplied ARGB (render harness: composes it over a test backdrop).</summary>
+    /// <summary>Opacity per surface as the alpha table really assigns it (render harness).</summary>
+    internal string GlassAlphaReport()
+    {
+        _surface ??= NewSurface();
+        var items = new (string name, Color color, float want)[]
+        {
+            ("pane", Theme.Bg, Glass.PaneAlpha), ("card", Theme.Card, Glass.CardAlpha),
+            ("card-hover", Over(HoverVeil, Theme.Card), Glass.CardAlpha),
+            ("tint-soft", Over(TintSoft, Theme.Card), Glass.TintSoftAlpha),
+            ("tint-strong", Over(TintStrong, Theme.Card), Glass.TintStrongAlpha),
+            ("track", Theme.TrackOnCard, Glass.CardAlpha), ("text", Theme.Text, 1f), ("faint", Theme.PFaint, 1f),
+            ("stale", Theme.PStale, 1f), ("crit", Theme.PCrit, 1f), ("warn", Theme.PWarn, 1f), ("ok", Theme.Ok, 1f)
+        };
+        var wrong = items.Where(i => Math.Abs(_surface.AlphaOf(i.color) - i.want * 255) > 4).Select(i => i.name).ToList();
+        return string.Join(" ", items.Select(i => $"{i.name}={_surface.AlphaOf(i.color)}")) +
+               $" wrong=[{string.Join(", ", wrong)}] (expect none)";
+    }
+
+    internal int[] RenderGlassFrame(Size size)
+    {
+        _surface ??= NewSurface();
+        using (var g = _surface.Begin(size))
+            Render(g, size);
+        return _surface.Frame();
+    }
 
     /// <summary>Paints the complete popup into any Graphics (screen or offscreen bitmap).</summary>
     public void Render(Graphics g, Size sz)
@@ -399,7 +517,7 @@ internal sealed class PopupCanvas : Control
         g.SetClip(body);
         if (_rows.Count == 0)
             Gfx.Text(g, "Keine Konten – Zahnrad oben rechts öffnet die Einstellungen", Theme.FSmall, body,
-                Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                Theme.PMuted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         var top = body.Top + S(BodyPadTop) - (int)Math.Round(_scroll);
         for (var i = 0; i < _rows.Count; i++)
         {
@@ -413,6 +531,11 @@ internal sealed class PopupCanvas : Control
         DrawHeader(g, w, _scroll > 0.5f);
         DrawFooter(g, w, sz.Height);
         DrawScrollbar(g, body);
+        if (_glass) // light catching the top edge of the pane
+        {
+            using var rim = new Pen(Color.FromArgb(36, 255, 255, 255));
+            g.DrawLine(rim, S(12), 1.5f, w - S(12), 1.5f);
+        }
         if (DrawOwnBorder)
             Gfx.DrawRound(g, Theme.CardBorder, new RectangleF(0.5f, 0.5f, w - 1, sz.Height - 1), S(10));
     }
@@ -436,12 +559,14 @@ internal sealed class PopupCanvas : Control
         DrawSummary(g, textX, S(38), w - NameX);
 
         DrawButton(g, pin, Pinned ? Theme.GlyphPinned : Theme.GlyphPin, "P", _hover == Zone.Pin,
-            Pinned ? Theme.Ok : Theme.Muted);
-        DrawButton(g, refresh, Theme.GlyphRefresh, "R", _hover == Zone.Refresh, Theme.Muted);
-        DrawButton(g, settings, Theme.GlyphSettings, "S", _hover == Zone.Settings, Theme.Muted);
+            Pinned ? Theme.Ok : Theme.PMuted);
+        DrawButton(g, refresh, Theme.GlyphRefresh, "R", _hover == Zone.Refresh, Theme.PMuted);
+        DrawButton(g, settings, Theme.GlyphSettings, "S", _hover == Zone.Settings, Theme.PMuted);
 
         // column titles (sticky) – a click sorts by that column
-        var ty = S(TitleH) + S(3);
+        if (_hasPace) DrawPaceLegend(g, textX, S(TitleH) - S(2), w - NameX);
+
+        var ty = S(TitleBandH) + S(3);
         var (x1, x2, x3, cw, mw) = Columns(w);
         DrawColumnTitle(g, "KONTO", SortColumn.Name, Zone.SortName, new Rectangle(NameX, ty, NameWidth, S(15)));
         DrawColumnTitle(g, "5 STUNDEN", SortColumn.Short, Zone.SortShort, new Rectangle(x1, ty, cw, S(15)));
@@ -464,7 +589,7 @@ internal sealed class PopupCanvas : Control
     private void DrawColumnTitle(Graphics g, string title, SortColumn column, Zone zone, Rectangle r)
     {
         var active = SortBy == column;
-        Gfx.Text(g, title, Theme.FCaps, r, active ? Theme.Text : _hover == zone ? Theme.Muted : Theme.Faint);
+        Gfx.Text(g, title, Theme.FCaps, r, active ? Theme.Text : _hover == zone ? Theme.PMuted : Theme.PFaint);
         if (!active) return;
 
         var x = r.X + Gfx.Measure(g, title, Theme.FCaps) + S(6);
@@ -479,7 +604,7 @@ internal sealed class PopupCanvas : Control
         var sx = (int)(x + tw) + S(6);
         var sw = Gfx.Measure(g, meaning, Theme.FTiny);
         if (sx + sw <= r.Right)
-            Gfx.Text(g, meaning, Theme.FTiny, new Rectangle(sx, r.Y, sw + S(2), r.Height), Theme.Muted);
+            Gfx.Text(g, meaning, Theme.FTiny, new Rectangle(sx, r.Y, sw + S(2), r.Height), Theme.PMuted);
     }
 
     private static string SortMeaning(SortColumn column, bool descending) => column == SortColumn.Name
@@ -505,14 +630,14 @@ internal sealed class PopupCanvas : Control
         var total = $"{_rows.Count} Konten";
         var cx = x;
         var tw = Gfx.Measure(g, total, Theme.FSmall);
-        Gfx.Text(g, total, Theme.FSmall, new Rectangle(cx, y, tw + S(2), S(16)), Theme.Muted);
+        Gfx.Text(g, total, Theme.FSmall, new Rectangle(cx, y, tw + S(2), S(16)), Theme.PMuted);
         cx += tw;
 
         var parts = new List<(string text, Color dot)>();
-        if (crit > 0) parts.Add(($"{crit} kritisch", Theme.Crit));
-        if (errors > 0) parts.Add(($"{errors} Fehler", Theme.Crit));
-        if (warn > 0) parts.Add(($"{warn} knapp", Theme.Warn));
-        if (stale > 0) parts.Add(($"{stale} veraltet", Theme.Stale));
+        if (crit > 0) parts.Add(($"{crit} kritisch", Theme.PCrit));
+        if (errors > 0) parts.Add(($"{errors} Fehler", Theme.PCrit));
+        if (warn > 0) parts.Add(($"{warn} knapp", Theme.PWarn));
+        if (stale > 0) parts.Add(($"{stale} veraltet", Theme.PStale));
         if (ok > 0) parts.Add(($"{ok} OK", Theme.Ok));
         foreach (var (text, dot) in parts)
         {
@@ -522,7 +647,7 @@ internal sealed class PopupCanvas : Control
             using (var b = new SolidBrush(dot))
                 g.FillEllipse(b, cx, y + S(5.5f), S(6), S(6));
             cx += S(10);
-            Gfx.Text(g, text, Theme.FSmall, new Rectangle(cx, y, tw + S(2), S(16)), Theme.Muted);
+            Gfx.Text(g, text, Theme.FSmall, new Rectangle(cx, y, tw + S(2), S(16)), Theme.PMuted);
             cx += tw;
         }
     }
@@ -545,7 +670,7 @@ internal sealed class PopupCanvas : Control
             g.DrawLine(pen, 0, top, w, top);
 
         var area = new Rectangle(NameX, top, w - 2 * NameX, fh);
-        Gfx.Text(g, $"Stand {Stamp:HH:mm:ss}", Theme.FTiny, area, Theme.Faint, TextFormatFlags.VerticalCenter);
+        Gfx.Text(g, $"Stand {Stamp:HH:mm:ss}", Theme.FTiny, area, Theme.PFaint, TextFormatFlags.VerticalCenter);
         var sortHover = _hover is Zone.SortName or Zone.SortShort or Zone.SortLong or Zone.SortModel;
         var hint = _hover switch
         {
@@ -554,7 +679,7 @@ internal sealed class PopupCanvas : Control
             _ when Pinned => "Angeheftet – Pin oder Tray-Icon zum Lösen",
             _ => "Titel ziehen = parken · Spaltenkopf = sortieren"
         };
-        Gfx.Text(g, hint, Theme.FTiny, area, Pinned && !sortHover ? Theme.Ok : Theme.Faint,
+        Gfx.Text(g, hint, Theme.FTiny, area, Pinned && !sortHover ? Theme.Ok : Theme.PFaint,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
     }
 
@@ -575,22 +700,23 @@ internal sealed class PopupCanvas : Control
         Gfx.FillRound(g, Theme.Card, card, S(8));
         var tint = row.State switch
         {
-            RowState.Crit or RowState.Error => Color.FromArgb(30, Theme.Warn),
-            RowState.Warn => Color.FromArgb(20, Theme.Warn),
+            RowState.Crit or RowState.Error => TintStrong,
+            RowState.Warn => TintSoft,
             _ => Color.Empty
         };
         if (!tint.IsEmpty) Gfx.FillRound(g, tint, card, S(8));
-        if (hover) Gfx.FillRound(g, Color.FromArgb(14, 255, 255, 255), card, S(8));
+        if (hover) Gfx.FillRound(g, HoverVeil, card, S(8));
+        if (_glass) Gfx.DrawRound(g, GlassEdge, RectangleF.Inflate(card, -0.5f, -0.5f), S(8));
 
         // name + second line (provider, or the state when something is wrong)
         Gfx.Text(g, v.Config.Name, Theme.FName, new Rectangle(NameX, y + S(7), NameWidth, S(18)),
-            row.Stale ? Theme.Muted : Theme.Text);
+            row.Stale ? Theme.PMuted : Theme.Text);
         var sy = y + S(26);
         Gfx.Text(g, row.StatusText, Theme.FTiny, new Rectangle(NameX, sy, NameWidth, S(15)), row.StatusColor);
         if (v.Polling)
         {
             var dx = Math.Min(NameX + Gfx.Measure(g, row.StatusText, Theme.FTiny) + S(7), NameX + NameWidth - S(4));
-            Gfx.FillRound(g, Theme.Muted, new RectangleF(dx, sy + S(6), S(4), S(4)), S(2));
+            Gfx.FillRound(g, Theme.PMuted, new RectangleF(dx, sy + S(6), S(4), S(4)), S(2));
         }
 
         var (x1, x2, x3, cw, mw) = Columns(w);
@@ -598,11 +724,11 @@ internal sealed class PopupCanvas : Control
         switch (row.Kind)
         {
             case RowKind.Loading:
-                Gfx.Text(g, "Erste Abfrage läuft …", Theme.FSmall, new Rectangle(x1, y + S(16), cellsW, S(16)), Theme.Muted);
+                Gfx.Text(g, "Erste Abfrage läuft …", Theme.FSmall, new Rectangle(x1, y + S(16), cellsW, S(16)), Theme.PMuted);
                 break;
             case RowKind.Error:
                 TextRenderer.DrawText(g, ShortError(v.Snapshot?.Error), Theme.FSmall,
-                    new Rectangle(x1, y + S(8), cellsW, S(34)), Theme.Crit,
+                    new Rectangle(x1, y + S(8), cellsW, S(34)), Theme.PCrit,
                     TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding |
                     TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.NoPrefix);
                 break;
@@ -654,14 +780,14 @@ internal sealed class PopupCanvas : Control
     {
         if (win is null)
         {
-            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x, y + S(10), cw, S(16)), Theme.Faint);
+            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x, y + S(10), cw, S(16)), Theme.PFaint);
             return;
         }
         // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
         // lime = unused (0 %) – forecast health does not drive the bar colour
         var frac0 = win.UsedFraction ?? 0;
-        var color = row.Stale ? Theme.Stale : frac0 >= 0.999 ? Theme.Crit : frac0 > 0 ? Theme.Warn : Theme.Ok;
-        var valueColor = row.Stale ? Theme.Stale : color == Theme.Ok ? Theme.Text : color;
+        var color = row.Stale ? Theme.PStale : frac0 >= 0.999 ? Theme.PCrit : frac0 > 0 ? Theme.PWarn : Theme.Ok;
+        var valueColor = row.Stale ? Theme.PStale : color == Theme.Ok ? Theme.Text : color;
 
         var value = Formatting.PercentShort(win.UsedFraction);
         var vw = Gfx.Measure(g, value, Theme.FValue);
@@ -684,14 +810,14 @@ internal sealed class PopupCanvas : Control
             var tw = Gfx.Measure(g, countdown, Theme.FTiny);
             if (tw <= room)
             {
-                Gfx.Text(g, countdown, Theme.FTiny, new Rectangle(right - tw - S(1), y + S(12), tw + S(2), S(15)), Theme.Muted);
+                Gfx.Text(g, countdown, Theme.FTiny, new Rectangle(right - tw - S(1), y + S(12), tw + S(2), S(15)), Theme.PMuted);
                 right -= tw + S(4);
                 room -= tw + S(4);
                 var iw = S(13);
                 if (win.ResetAtUtc is not null && Theme.IconFamily is not null && room >= iw)
                 {
                     Gfx.Text(g, Theme.GlyphClock, Theme.FIconSmall, new Rectangle(right - iw, y + S(12), iw, S(15)),
-                        Theme.Faint, TextFormatFlags.VerticalCenter);
+                        Theme.PFaint, TextFormatFlags.VerticalCenter);
                     right -= iw + S(2);
                 }
             }
@@ -703,10 +829,57 @@ internal sealed class PopupCanvas : Control
         {
             var lx = x + vw + S(8);
             if (right - lx > S(16))
-                Gfx.Text(g, label, Theme.FTiny, new Rectangle(lx, y + S(12), right - lx - S(4), S(15)), Theme.Faint);
+                Gfx.Text(g, label, Theme.FTiny, new Rectangle(lx, y + S(12), right - lx - S(4), S(15)), Theme.PFaint);
         }
 
-        Gfx.Bar(g, new RectangleF(x, y + S(32), cw, S(6)), win.UsedFraction ?? 0, color, Theme.TrackOnCard);
+        var bar = new RectangleF(x, y + S(32), cw, S(6));
+        Gfx.Bar(g, bar, win.UsedFraction ?? 0, color, Theme.TrackOnCard);
+        if (WindowLayout.ElapsedFraction(win, now) is { } elapsed)
+            DrawPaceTick(g, bar, elapsed, row.Stale ? Theme.PMuted : Theme.Text);
+    }
+
+    /// <summary>Pace tick: how much of the window's time has passed. A bar that ends left of it
+    /// is below the pace of time. Drawn without anti-aliasing – a 2 px line must stay crisp.</summary>
+    private static void DrawPaceTick(Graphics g, RectangleF bar, double elapsed, Color color)
+    {
+        var tw = Math.Max(2, S(2));
+        var over = S(3);
+        var x = (int)Math.Round(Math.Clamp(bar.X + bar.Width * elapsed - tw / 2f, bar.X, bar.Right - tw));
+        var top = (int)bar.Y - over;
+        var height = (int)bar.Height + 2 * over;
+        var mode = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.None;
+        using (var edge = new SolidBrush(Color.FromArgb(150, 0, 0, 0))) // keeps it visible on a filled bar
+            g.FillRectangle(edge, x - 1, top - 1, tw + 2, height + 2);
+        using (var b = new SolidBrush(color))
+            g.FillRectangle(b, x, top, tw, height);
+        g.SmoothingMode = mode;
+    }
+
+    /// <summary>One line under the summary that explains the tick; the rule is added if it fits.</summary>
+    private static void DrawPaceLegend(Graphics g, int x, int y, int limit)
+    {
+        var h = S(15);
+        Gfx.FillRound(g, Theme.PWarn, new RectangleF(x, y + S(6), S(18), S(5)), S(2.5f));
+        x += S(24);
+        x += LegendText(g, "Verbrauch", x, y, h, Theme.PMuted) + S(14);
+        DrawPaceTick(g, new RectangleF(x, y + S(5), S(2), S(6)), 0, Theme.Text);
+        x += S(8);
+        x += LegendText(g, "verstrichene Zeit im Fenster", x, y, h, Theme.PMuted) + S(14);
+        foreach (var rule in new[] { "Balken vor dem Strich = im Plan", "vor dem Strich = im Plan" })
+        {
+            var rw = Gfx.Measure(g, rule, Theme.FTiny);
+            if (x + rw > limit) continue;
+            Gfx.Text(g, rule, Theme.FTiny, new Rectangle(limit - rw - S(1), y, rw + S(2), h), Theme.PFaint);
+            break;
+        }
+    }
+
+    private static int LegendText(Graphics g, string text, int x, int y, int h, Color color)
+    {
+        var tw = Gfx.Measure(g, text, Theme.FTiny);
+        Gfx.Text(g, text, Theme.FTiny, new Rectangle(x, y, tw + S(2), h), color);
+        return tw;
     }
 
     /// <summary>Balance/info accounts use the first two cells: amount | runway. The caption
@@ -716,17 +889,17 @@ internal sealed class PopupCanvas : Control
         DateTimeOffset now)
     {
         row.View.Evals.TryGetValue(span.Key, out var ev);
-        var textColor = row.Stale ? Theme.Stale : Theme.Text;
+        var textColor = row.Stale ? Theme.PStale : Theme.Text;
 
         // cell 1: amount
         var amount = span.Remaining is null ? "–" : Formatting.Money(span.Remaining, span.Unit);
         ValueWithCaption(g, amount, textColor, span.IsInfoOnly ? span.Label : "Guthaben", x1, x2 - S(6), y);
         if (!string.IsNullOrEmpty(span.Note))
-            Gfx.Text(g, span.Note, Theme.FTiny, new Rectangle(x1, y + S(27), x2 + cw - x1, S(15)), Theme.Faint);
+            Gfx.Text(g, span.Note, Theme.FTiny, new Rectangle(x1, y + S(27), x2 + cw - x1, S(15)), Theme.PFaint);
 
         if (span.IsInfoOnly)
         {
-            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x2, y + S(10), cw, S(16)), Theme.Faint);
+            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x2, y + S(10), cw, S(16)), Theme.PFaint);
             return;
         }
 
@@ -737,17 +910,17 @@ internal sealed class PopupCanvas : Control
         {
             var left = tte - (now - (row.Display?.AtUtc ?? now));
             runway = "~" + Formatting.Span(left < TimeSpan.Zero ? TimeSpan.Zero : left);
-            runwayColor = row.Stale ? Theme.Stale : ev.Health is Health.Warn or Health.Crit ? Theme.ForHealth(ev.Health) : Theme.Text;
+            runwayColor = row.Stale ? Theme.PStale : ev.Health is Health.Warn or Health.Crit ? Theme.PForHealth(ev.Health) : Theme.Text;
         }
         else
         {
             runway = "—";
-            runwayColor = Theme.Faint;
+            runwayColor = Theme.PFaint;
         }
         ValueWithCaption(g, runway, runwayColor, "Reichweite", x2, x2 + restWidth, y);
         if (string.IsNullOrEmpty(span.Note))
             Gfx.Text(g, ev is { HasRate: true } ? "bei aktuellem Verbrauch" : "kein Verbrauch", Theme.FTiny,
-                new Rectangle(x2, y + S(27), restWidth, S(15)), Theme.Faint);
+                new Rectangle(x2, y + S(27), restWidth, S(15)), Theme.PFaint);
     }
 
     /// <summary>Value in the value font, its caption small and grey right behind it (left out
@@ -759,19 +932,19 @@ internal sealed class PopupCanvas : Control
         var tw = Gfx.Measure(g, caption, Theme.FTiny);
         var cx = x + vw + S(7);
         if (cx + tw <= limitRight)
-            Gfx.Text(g, caption, Theme.FTiny, new Rectangle(cx, y + S(12), tw + S(2), S(15)), Theme.Faint);
+            Gfx.Text(g, caption, Theme.FTiny, new Rectangle(cx, y + S(12), tw + S(2), S(15)), Theme.PFaint);
     }
 
     /// <summary>Additional window: label under the name column, value across the cells.</summary>
     private void DrawExtra(Graphics g, RowInfo row, QuotaWindow win, int y, int w, DateTimeOffset now)
     {
         Gfx.Text(g, win.IsBalance ? "Guthaben" : WindowLayout.ShortLabel(win), Theme.FTiny,
-            new Rectangle(NameX, y + S(2), NameWidth, S(15)), Theme.Muted);
+            new Rectangle(NameX, y + S(2), NameWidth, S(15)), Theme.PMuted);
         var x = CellsX;
         var width = CellsWidth(w);
         if (win.IsInfoOnly)
         {
-            Gfx.Text(g, win.Note ?? "", Theme.FTiny, new Rectangle(x, y + S(2), width, S(15)), Theme.Faint);
+            Gfx.Text(g, win.Note ?? "", Theme.FTiny, new Rectangle(x, y + S(2), width, S(15)), Theme.PFaint);
         }
         else if (win.IsBalance)
         {
@@ -781,14 +954,14 @@ internal sealed class PopupCanvas : Control
         {
             // same colour rule as the cells
             var frac = win.UsedFraction ?? 0;
-            var color = row.Stale ? Theme.Stale : frac >= 0.999 ? Theme.Crit : frac > 0 ? Theme.Warn : Theme.Ok;
+            var color = row.Stale ? Theme.PStale : frac >= 0.999 ? Theme.PCrit : frac > 0 ? Theme.PWarn : Theme.Ok;
             Gfx.Bar(g, new RectangleF(x, y + S(7), S(70), S(5)), win.UsedFraction ?? 0, color, Theme.TrackOnCard);
             var text = Formatting.Percent(win.UsedFraction);
             if (win.Remaining is not null && win.Total is not null)
                 text += $" · noch {Formatting.Count(win.Remaining)} von {Formatting.Count(win.Total)}";
             if (win.ResetAtUtc is { } reset && reset > now)
                 text += " · Reset in " + Formatting.Span(reset - now);
-            Gfx.Text(g, text, Theme.FTiny, new Rectangle(x + S(78), y + S(2), width - S(78), S(15)), Theme.Muted);
+            Gfx.Text(g, text, Theme.FTiny, new Rectangle(x + S(78), y + S(2), width - S(78), S(15)), Theme.PMuted);
         }
     }
 
@@ -814,6 +987,8 @@ internal sealed class PopupCanvas : Control
                 sb.Append($"• {w.Label}: {value}");
                 if (w.ResetAtUtc is { } r)
                     sb.Append($" · Reset {r.ToLocalTime():ddd dd.MM. HH:mm} (in {Formatting.Span(r - now)})");
+                if (WindowLayout.ElapsedFraction(w, now) is { } elapsed)
+                    sb.Append($" · Fenster zu {elapsed * 100:0} % um");
                 sb.AppendLine();
                 if (ev is not null && !w.IsInfoOnly)
                     sb.AppendLine("    " + (ev.HasRate || ev.Health != Health.Ok
@@ -1038,7 +1213,7 @@ internal sealed class PopupCanvas : Control
     internal Point ColumnTitlePoint(SortColumn column)
     {
         var (x1, x2, x3, _, _) = Columns(ClientSize.Width);
-        var y = S(TitleH) + S(ColumnsH) / 2;
+        var y = S(TitleBandH) + S(ColumnsH) / 2;
         return column switch
         {
             SortColumn.Name => new Point(NameX + S(20), y),
@@ -1069,6 +1244,7 @@ internal sealed class PopupCanvas : Control
             _anim.Dispose();
             _tipTimer.Dispose();
             _tip.Dispose();
+            _surface?.Dispose();
         }
         base.Dispose(disposing);
     }

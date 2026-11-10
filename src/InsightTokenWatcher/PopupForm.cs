@@ -19,6 +19,7 @@ internal sealed class PopupForm : Form
     private readonly System.Windows.Forms.Timer _repaint = new() { Interval = 20000 }; // countdowns
     private Point _anchor;
     private DateTime _lastInsideUtc;
+    private int _glassTick;
 
     /// <summary>User-parked position (drag). When set and visible on any screen, it wins over the tray anchor.</summary>
     public Point? PreferredLocation { get; set; }
@@ -35,7 +36,12 @@ internal sealed class PopupForm : Form
         BackColor = Theme.Bg;
         Canvas.DrawOwnBorder = !IsWin11;
         Controls.Add(Canvas);
-        _hideTimer.Tick += (_, _) => CheckHide();
+        _hideTimer.Tick += (_, _) =>
+        {
+            CheckHide();
+            // while visible: about once a second, has the desktop around the popup changed?
+            if (Visible && Canvas.GlassActive && ++_glassTick % 7 == 0) AdaptGlass(around: true);
+        };
         _repaint.Tick += (_, _) => Canvas.Invalidate();
     }
 
@@ -56,12 +62,32 @@ internal sealed class PopupForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        if (!IsWin11) return;
+        if (!IsWin11)
+        {
+            Canvas.GlassActive = false;
+            return;
+        }
         var corner = DWMWCP_ROUND;
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
         var border = ColorTranslator.ToWin32(Theme.CardBorder);
         DwmSetWindowAttribute(Handle, DWMWA_BORDER_COLOR, ref border, sizeof(int));
+        var log = "";
+        Canvas.GlassActive = Glass.Enabled && Glass.Apply(Handle, out log); // refused → the opaque look stays
+        GlassLog = log;
     }
+
+    /// <summary>Switches the glass look. The backdrop belongs to the window, so it gets a new one.</summary>
+    public void SetGlass(bool on)
+    {
+        if (Glass.Enabled == on) return;
+        Glass.Enabled = on;
+        if (!IsHandleCreated) return;
+        HidePopup();
+        RecreateHandle();
+    }
+
+    /// <summary>What the backdrop request returned (diagnostics).</summary>
+    public string GlassLog { get; private set; } = "";
 
     protected override void OnResize(EventArgs e)
     {
@@ -86,6 +112,8 @@ internal sealed class PopupForm : Form
         {
             _anchor = anchor;
             ApplyBounds();
+            // still hidden: the screen under the future bounds is exactly what will be behind the glass
+            if (Canvas.GlassActive) AdaptGlass(around: false);
             Show();
         }
         _lastInsideUtc = DateTime.UtcNow;
@@ -94,6 +122,26 @@ internal sealed class PopupForm : Form
     }
 
     public void KeepAlive() => _lastInsideUtc = DateTime.UtcNow;
+
+    /// <summary>
+    /// Glass opacity follows the brightness behind the popup. Hidden popup: measured on its
+    /// future area. Visible popup: on a ring just outside it (its own pixels must not count).
+    /// </summary>
+    private void AdaptGlass(bool around)
+    {
+        var b = Bounds;
+        int off = Theme.S(12), th = Theme.S(14); // beyond the drop shadow
+        var areas = around
+            ? new[]
+            {
+                new Rectangle(b.Left, b.Top - off - th, b.Width, th), new Rectangle(b.Left, b.Bottom + off, b.Width, th),
+                new Rectangle(b.Left - off - th, b.Top, th, b.Height), new Rectangle(b.Right + off, b.Top, th, b.Height)
+            }
+            : new[] { b };
+        // unreadable screen (locked, secure desktop): keep what we have
+        if (Glass.ScreenLuminance(areas) is { } luminance && Glass.Adapt(luminance))
+            Canvas.GlassAlphasChanged();
+    }
 
     public void HidePopup()
     {

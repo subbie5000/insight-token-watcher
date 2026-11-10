@@ -32,6 +32,8 @@ internal static class RenderHarness
         report.AppendLine($"scale={Theme.DpiScale} width={canvas.Width} desiredHeight={full} rows={canvas.RowCount} content={canvas.ContentHeight}");
         Save(canvas, full, Path.Combine(outDir, "popup_full.png"));
 
+        SaveGlass(canvas, full, Path.Combine(outDir, "popup_glass_sim.png"), report);
+
         // constrained height → scroll to the bottom → 5 simulated poll updates must keep the position
         var limited = Theme.S(430);
         canvas.Size = new Size(canvas.Width, limited);
@@ -88,6 +90,85 @@ internal static class RenderHarness
         using (var g = Graphics.FromImage(bmp))
             canvas.Render(g, new Size(canvas.Width, height));
         bmp.Save(path, ImageFormat.Png);
+    }
+
+    /// <summary>
+    /// The glass frame composed over a synthetic backdrop (stripes from dark to white). The real
+    /// backdrop is drawn by DWM and cannot be rendered offscreen – this checks our half: surfaces
+    /// translucent, text and bars opaque, no holes. The report adds the contrast of every text
+    /// colour on every surface for the worst case, a white window behind the popup.
+    /// </summary>
+    private static void SaveGlass(PopupCanvas canvas, int height, string path, StringBuilder report)
+    {
+        var solid = canvas.GlassActive;
+        canvas.GlassActive = true; // glass palette for the text
+        var size = new Size(canvas.Width, height);
+        var frame = canvas.RenderGlassFrame(size);
+        using var bmp = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppRgb);
+        var data = bmp.LockBits(new Rectangle(Point.Empty, size), ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
+        var row = new int[size.Width];
+        long translucent = 0, opaque = 0;
+        Color[] stripes = { Color.FromArgb(14, 21, 34), Color.FromArgb(76, 125, 255), Color.FromArgb(56, 214, 245),
+            Color.FromArgb(169, 146, 255), Color.White };
+        for (var y = 0; y < size.Height; y++)
+        {
+            for (var x = 0; x < size.Width; x++)
+            {
+                var p = frame[y * size.Width + x];
+                var a = (p >> 24) & 0xFF;
+                if (a == 255) opaque++; else translucent++;
+                var back = stripes[Math.Min(stripes.Length - 1, x * stripes.Length / size.Width)];
+                int Mix(int premultiplied, int under) => Math.Min(255, premultiplied + under * (255 - a) / 255);
+                row[x] = (Mix((p >> 16) & 0xFF, back.R) << 16) | (Mix((p >> 8) & 0xFF, back.G) << 8) | Mix(p & 0xFF, back.B);
+            }
+            System.Runtime.InteropServices.Marshal.Copy(row, 0, data.Scan0 + y * data.Stride, size.Width);
+        }
+        bmp.UnlockBits(data);
+        bmp.Save(path, ImageFormat.Png);
+        report.AppendLine($"glass sim: translucent={translucent * 100 / (translucent + opaque)} % of the pixels");
+        report.AppendLine("glass alpha: " + canvas.GlassAlphaReport());
+
+        // The opacities follow the brightness behind the popup. For a dark desktop, a mid-bright
+        // one and a white window: which opacities result, and the weakest text contrast there.
+        static Color Over(int alpha, Color veil, Color under) => Color.FromArgb(under.R + (veil.R - under.R) * alpha / 255,
+            under.G + (veil.G - under.G) * alpha / 255, under.B + (veil.B - under.B) * alpha / 255);
+        var texts = new (string name, Color color, string on)[]
+        {
+            ("text", Theme.Text, "pane card tint-soft tint-strong"), ("muted", Theme.PMuted, "pane card tint-soft tint-strong"),
+            ("faint", Theme.PFaint, "pane card"), ("ok", Theme.Ok, "pane card tint-soft tint-strong"),
+            ("warn", Theme.PWarn, "card tint-soft tint-strong"), ("crit", Theme.PCrit, "card tint-soft tint-strong"),
+            ("stale", Theme.PStale, "card")
+        };
+        foreach (var luminance in new[] { 0.01, 0.10, 0.35, 1.0 })
+        {
+            Glass.Adapt(luminance);
+            var grey = Glass.ToLevel(luminance);
+            var surfaces = new (string name, Color color, float alpha)[]
+            {
+                ("pane", Theme.Bg, Glass.PaneAlpha), ("card", Theme.Card, Glass.CardAlpha),
+                ("tint-soft", Over(20, Theme.Warn, Theme.Card), Glass.TintSoftAlpha),
+                ("tint-strong", Over(30, Theme.Warn, Theme.Card), Glass.TintStrongAlpha)
+            };
+            var weak = new List<string>();
+            var min = double.MaxValue;
+            foreach (var (sn, sc, sa) in surfaces)
+            {
+                double C(double v) => v * sa + grey * (1 - sa);
+                var under = Glass.Luminance(C(sc.R), C(sc.G), C(sc.B));
+                foreach (var (tn, tc, on) in texts)
+                {
+                    if (!on.Split(' ').Contains(sn)) continue;
+                    var ratio = (Glass.Luminance(tc.R, tc.G, tc.B) + 0.05) / (under + 0.05);
+                    min = Math.Min(min, ratio);
+                    var need = tn == "stale" ? 3.5 : 4.5; // old values are dimmed on purpose
+                    if (ratio < need) weak.Add($"{tn}/{sn}={ratio:0.00}");
+                }
+            }
+            report.AppendLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"glass over luminance {luminance:0.00} (grey {grey:0}): opacity pane/card/soft/strong={Glass.PaneAlpha:0.00}/{Glass.CardAlpha:0.00}/{Glass.TintSoftAlpha:0.00}/{Glass.TintStrongAlpha:0.00} min contrast={min:0.00} below limit=[{string.Join(", ", weak)}] (expect none)"));
+        }
+        canvas.GlassAlphasChanged();
+        canvas.GlassActive = solid;
     }
 
     private static void SaveIcons(string path)

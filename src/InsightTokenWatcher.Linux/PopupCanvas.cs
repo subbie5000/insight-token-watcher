@@ -20,7 +20,7 @@ internal sealed class PopupCanvas : Control
     /// <summary>Logical width (DIP): wider once the model column is shown.</summary>
     public double LogicalWidth => _modelScope is null ? 480 : 560;
 
-    private const double TitleH = 58, ColumnsH = 26, HeaderH = TitleH + ColumnsH, FooterH = 28;
+    private const double TitleH = 58, LegendH = 19, ColumnsH = 26, FooterH = 28;
     private const double RowBase = 48, RowGap = 4, LineH = 19;
     private const double OuterX = 8, CardPadX = 12, NameW = 128, NameGap = 12, CellGap = 16, ModelW = 92;
     private const double BodyPadTop = 0, BodyPadBottom = 8, ButtonSize = 28;
@@ -35,6 +35,11 @@ internal sealed class PopupCanvas : Control
 
     private readonly List<Row> _rows = new();
     private string? _modelScope;   // model family of the third column ("Fable"); null = no such column
+    private bool _hasPace;         // a bar carries a pace tick → the legend row is shown
+
+    /// <summary>Title, summary and – with pace ticks – the legend; the column titles follow.</summary>
+    private double TitleBandH => TitleH + (_hasPace ? LegendH : 0);
+    private double HeaderH => TitleBandH + ColumnsH;
     private int _contentH = 84;
     private double _scroll;
     private double _scrollTarget;
@@ -111,10 +116,13 @@ internal sealed class PopupCanvas : Control
         _rows.Clear();
         _modelScope = WindowLayout.ColumnScope(views);
         var utcNow = DateTimeOffset.UtcNow;
+        _hasPace = false;
         var y = 0.0;
         foreach (var v in AccountSort.Apply(views, SortBy, SortDescending, utcNow))
         {
             var layout = v.Display is { } snap ? WindowLayout.Classify(snap.Windows, _modelScope) : new RowLayout();
+            _hasPace |= new[] { layout.Short, layout.Long, layout.Model }.Any(w =>
+                w is not null && WindowLayout.ElapsedFraction(w, utcNow) is not null);
             var (state, error) = Classify(v);
             var (sub, subBrush) = Status(v, state, layout);
             var notes = new List<(string text, IBrush brush)>();
@@ -311,7 +319,7 @@ internal sealed class PopupCanvas : Control
         if (settings.Contains(p)) return Zone.Settings;
 
         var body = BodyRect(Bounds.Size);
-        if (p.Y >= TitleH && p.Y < HeaderH) // column titles: click sorts
+        if (p.Y >= TitleBandH && p.Y < HeaderH) // column titles: click sorts
         {
             var (x1, x2, x3, _, mw) = Columns(Bounds.Width);
             if (p.X < x1 - CellGap / 2) return Zone.SortName;
@@ -382,6 +390,7 @@ internal sealed class PopupCanvas : Control
         Tl(g, "Insight Token Watcher", Ui.FTitle, Ui.TextBrush, pin.Left - textX - 8, 22, FontWeight.SemiBold,
             new Point(textX, 10));
         DrawSummary(g, textX, 38, w - NameX);
+        if (_hasPace) DrawPaceLegend(g, textX, TitleH - 2, w - NameX);
 
         DrawButton(g, pin, Pinned ? IconFactory.Glyph.Pinned : IconFactory.Glyph.Pin, _hover == Zone.Pin,
             Pinned ? Ui.Ok : Ui.Muted);
@@ -460,7 +469,7 @@ internal sealed class PopupCanvas : Control
 
     private void DrawColumns(DrawingContext g, double w)
     {
-        var ty = TitleH + 3;
+        var ty = TitleBandH + 3;
         var (x1, x2, x3, cw, mw) = Columns(w);
         DrawColumnTitle(g, "KONTO", SortColumn.Name, Zone.SortName, new Rect(NameX, ty, NameW, 15));
         DrawColumnTitle(g, "5 STUNDEN", SortColumn.Short, Zone.SortShort, new Rect(x1, ty, cw, 15));
@@ -612,9 +621,50 @@ internal sealed class PopupCanvas : Control
                 Tl(g, label, Ui.FTiny, Ui.FaintBrush, right - lx - 4, 15, FontWeight.Normal, new Point(lx, top + 10));
         }
 
-        g.DrawRectangle(Ui.TrackOnCardBrush, null, new Rect(x, top + 32, cw, 6), 3, 3);
+        var bar = new Rect(x, top + 32, cw, 6);
+        g.DrawRectangle(Ui.TrackOnCardBrush, null, bar, 3, 3);
         if (frac > 0.001)
             g.DrawRectangle(barBrush, null, new Rect(x, top + 32, Math.Max(6, cw * Math.Min(1, frac)), 6), 3, 3);
+        if (WindowLayout.ElapsedFraction(win, _now) is { } elapsed)
+            DrawPaceTick(g, bar, elapsed, v.IsStale ? Ui.MutedBrush : Ui.TextBrush);
+    }
+
+    /// <summary>Pace tick: how much of the window's time has passed. A bar that ends left of it
+    /// is below the pace of time.</summary>
+    private static void DrawPaceTick(DrawingContext g, Rect bar, double elapsed, IBrush brush)
+    {
+        const double tw = 2, over = 3;
+        var x = Math.Round(Math.Clamp(bar.X + bar.Width * elapsed - tw / 2, bar.X, bar.Right - tw));
+        var r = new Rect(x, bar.Y - over, tw, bar.Height + 2 * over);
+        g.DrawRectangle(PaceEdgeBrush, null, r.Inflate(1)); // keeps it visible on a filled bar
+        g.DrawRectangle(brush, null, r);
+    }
+
+    private static readonly IBrush PaceEdgeBrush = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0));
+
+    /// <summary>One line under the summary that explains the tick; the rule is added if it fits.</summary>
+    private static void DrawPaceLegend(DrawingContext g, double x, double y, double limit)
+    {
+        g.DrawRectangle(Ui.WarnBrush, null, new Rect(x, y + 6, 18, 5), 2.5, 2.5);
+        x += 24;
+        x += LegendText(g, "Verbrauch", x, y) + 14;
+        DrawPaceTick(g, new Rect(x, y + 5, 2, 6), 0, Ui.TextBrush);
+        x += 8;
+        x += LegendText(g, "verstrichene Zeit im Fenster", x, y) + 14;
+        foreach (var rule in new[] { "Balken vor dem Strich = im Plan", "vor dem Strich = im Plan" })
+        {
+            var tl = Layout(rule, Ui.FTiny, Ui.FaintBrush);
+            if (x + tl.Width > limit) continue;
+            tl.Draw(g, new Point(limit - tl.Width, y));
+            break;
+        }
+    }
+
+    private static double LegendText(DrawingContext g, string text, double x, double y)
+    {
+        var tl = Layout(text, Ui.FTiny, Ui.MutedBrush);
+        tl.Draw(g, new Point(x, y));
+        return tl.Width;
     }
 
     /// <summary>Balance/info accounts use the first two cells: amount | runway. The caption
@@ -746,6 +796,8 @@ internal sealed class PopupCanvas : Control
                 if (w.ResetAtUtc is { } r && r > now)
                     sb.Append("\n   Reset ").Append(r.ToLocalTime().ToString("ddd dd.MM. HH:mm", CultureInfo.GetCultureInfo("de-DE")))
                         .Append(" (in ").Append(Formatting.Span(r - now)).Append(')');
+                if (WindowLayout.ElapsedFraction(w, now) is { } elapsed)
+                    sb.Append($" · Fenster zu {elapsed * 100:0} % um");
             }
         var (_, error) = Classify(v);
         if (error is not null) sb.Append("\n⚠ ").Append(error);
@@ -901,7 +953,7 @@ internal sealed class PopupCanvas : Control
     internal Point ColumnTitlePoint(SortColumn column)
     {
         var (x1, x2, x3, _, _) = Columns(Bounds.Width);
-        var y = TitleH + ColumnsH / 2;
+        var y = TitleBandH + ColumnsH / 2;
         return column switch
         {
             SortColumn.Name => new Point(NameX + 20, y),

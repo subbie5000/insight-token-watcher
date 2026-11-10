@@ -87,6 +87,18 @@ crit notifications use `notify-send` when available.
   Fable model. As soon as an account reports one, a third column **FABLE** appears (the
   popup gets wider). A used-up Fable week marks the account amber with the status
   "FABLE LEER" — never as critical, because every other model still runs on it.
+- **Pace tick:** a thin vertical line on every bar marks how much of the window's time has
+  passed (a week that resets in two days is 5/7 through). A bar that ends left of the tick is
+  below the pace of time. It is the *average* pace since the window started; warnings still
+  come from the forecast, which uses the burn rate of the last hour – the two can disagree
+  (heavy use early in the week, none since). Hover a row for the exact share.
+- **Glass (Windows 11 22H2+):** the popup is a translucent pane over the blurred desktop.
+  Its opacity follows the brightness behind it – clearly translucent over a dark desktop,
+  nearly solid over a white window – so text keeps a contrast of at least 4.5:1. For that
+  the app reads the brightness of the screen around the popup about once a second (a single
+  number; the pixels are not kept). Switch it off under *Einstellungen → Popup als Glas*;
+  without transparency effects, in high-contrast mode and in remote sessions the popup is
+  opaque anyway.
 - A healthy account stays quiet (its second line names the provider). Only exceptions
   get a coloured status word and a forecast line ("Woche: leer in … – Reset erst in …!").
 - **Hover a row** for details (all windows, exact reset times, forecasts); **click a

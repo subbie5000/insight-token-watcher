@@ -115,6 +115,22 @@ public static class WindowLayout
         return layout.Span is { IsBalance: true } ? "Guthaben" : layout.Span is not null ? "Erreichbarkeit" : "Kontingent";
     }
 
+    /// <summary>
+    /// Share of the window's time that has already passed (0..1): a week that resets in two days
+    /// is 5/7 through. Drawn as a tick on the usage bar – a bar that ends left of the tick is
+    /// below the pace of time. This is the AVERAGE pace since the window started; the forecast
+    /// (burn rate of the last hour) stays the authority for warnings. Null when length or reset
+    /// are unknown, the reset has passed (old values) or lies further away than one window.
+    /// </summary>
+    public static double? ElapsedFraction(QuotaWindow w, DateTimeOffset now)
+    {
+        if (w.IsBalance || w.IsInfoOnly || w.WindowMinutes is not { } minutes || minutes < 5) return null;
+        if (w.ResetAtUtc is not { } reset) return null;
+        var left = (reset - now).TotalMinutes;
+        if (left <= 0 || left > minutes * 1.02) return null;
+        return Math.Clamp(1 - left / minutes, 0, 1);
+    }
+
     /// <summary>"FABLE LEER" (limit reached) or "FABLE KNAPP" (runs out before its reset).</summary>
     public static string ModelLimitStatus(QuotaWindow w) =>
         $"{w.Scope} {(w.UsedFraction is >= 0.999 ? "leer" : "knapp")}".ToUpperInvariant();

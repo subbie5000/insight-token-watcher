@@ -32,6 +32,25 @@ internal static class Theme
         _ => Unknown
     };
 
+    // ---- popup text ----
+    // On glass the surface behind the text varies with the desktop. Secondary and alarm tones
+    // are brighter there (Glass.Adapt sizes the opacities for exactly these colours); dialogs
+    // and the tray icon keep the base colours.
+    public static bool GlassPalette { get; set; }
+    public static Color PMuted => GlassPalette ? GlassText.Muted : Muted;
+    public static Color PFaint => GlassPalette ? GlassText.Faint : Faint;
+    public static Color PStale => GlassPalette ? GlassText.Stale : Stale;
+    public static Color PWarn => GlassPalette ? GlassText.Warn : Warn;
+    public static Color PCrit => GlassPalette ? GlassText.Crit : Crit;
+
+    public static Color PForHealth(Health h) => h switch
+    {
+        Health.Ok => Ok,
+        Health.Warn => PWarn,
+        Health.Crit => PCrit,
+        _ => Unknown
+    };
+
     public static string HealthLabel(Health h) => h switch
     {
         Health.Ok => "OK",

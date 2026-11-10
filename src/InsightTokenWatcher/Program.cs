@@ -30,6 +30,11 @@ internal static class Program
         if (args.Length >= 1 && args[0].Equals("--render", StringComparison.OrdinalIgnoreCase))
             return RenderHarness.Run(args[1..]);
 
+        // On-screen check of the glass backdrop (needs an interactive session).
+        // InsightTokenWatcher.exe --glass-probe <outDir> [--modes dwm-acrylic,accent-acrylic] [--alpha 0.62]
+        if (args.Length >= 1 && args[0].Equals("--glass-probe", StringComparison.OrdinalIgnoreCase))
+            return GlassProbe.Run(args[1..]);
+
         _mutex = new Mutex(true, MutexName, out var created);
         if (!created)
         {

@@ -11,6 +11,7 @@ internal sealed class SettingsForm : Form
     private readonly ListBox _list = new();
     private readonly CheckBox _chkBalloons = new();
     private readonly CheckBox _chkAutostart = new();
+    private readonly CheckBox _chkGlass = new();
     private readonly Label _status = new();
 
     public SettingsForm(TrayAppContext ctx)
@@ -25,7 +26,7 @@ internal sealed class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(580, 470);
+        ClientSize = new Size(580, 496);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
         Font = Theme.BodyFont;
@@ -78,12 +79,23 @@ internal sealed class SettingsForm : Form
         _chkAutostart.Checked = IsAutostart();
         Controls.Add(_chkAutostart);
 
-        _status.Location = new Point(16, y + 100);
+        _chkGlass.Text = Glass.Supported
+            ? "Popup als Glas (durchscheinend; wird über hellen Fenstern dichter)"
+            : "Popup als Glas – braucht Windows 11 22H2 mit Transparenzeffekten";
+        _chkGlass.Location = new Point(16, y + 96);
+        _chkGlass.AutoSize = true;
+        _chkGlass.ForeColor = Glass.Supported ? Theme.Text : Theme.Muted;
+        _chkGlass.Enabled = Glass.Supported;
+        _chkGlass.Checked = _ctx.Store.Settings.Glass;
+        _chkGlass.CheckedChanged += (_, _) => SaveGlass();
+        Controls.Add(_chkGlass);
+
+        _status.Location = new Point(16, y + 126);
         _status.Size = new Size(440, 34);
         _status.ForeColor = Theme.Muted;
         Controls.Add(_status);
 
-        Controls.Add(MakeButton("Schließen", 468, y + 102, (_, _) => Close()));
+        Controls.Add(MakeButton("Schließen", 468, y + 128, (_, _) => Close()));
 
         RefreshList();
     }
@@ -278,6 +290,15 @@ internal sealed class SettingsForm : Form
         }));
         RefreshList();
         _ctx.ReloadAccounts();
+    }
+
+    /// <summary>Applied right away, so the effect can be judged while the dialog is open.</summary>
+    private void SaveGlass()
+    {
+        var glass = _chkGlass.Checked;
+        if (_ctx.Store.Settings.Glass == glass) return;
+        if (TrySave(() => _ctx.Store.UpdateSettings(s => s.Glass = glass)))
+            _ctx.ApplyGlass();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

@@ -1240,6 +1240,26 @@ Run("config: sorting by the model column is stored so that older versions can st
     }
 });
 
+Run("pace tick: share of the window's time that has passed", () =>
+{
+    var now = DateTimeOffset.UtcNow;
+    QuotaWindow W(double? minutes, double? resetInMin, bool balance = false) => new()
+    {
+        Key = "w", WindowMinutes = minutes, IsBalance = balance,
+        ResetAtUtc = resetInMin is { } m ? now.AddMinutes(m) : null
+    };
+    double? E(QuotaWindow w) => WindowLayout.ElapsedFraction(w, now);
+    Check(Math.Abs(E(W(300, 216))!.Value - 0.28) < 1e-9, "5 h window, reset in 3 h 36 min → 28 %: " + E(W(300, 216)));
+    Check(Math.Abs(E(W(10080, 10080 - 1440))!.Value - 1.0 / 7) < 1e-9, "week, one day in");
+    Check(E(W(300, 300)) == 0, "just started");
+    Check(E(W(300, 304)) == 0, "reset slightly beyond the window (clock skew) clamps to 0");
+    Check(E(W(300, 400)) is null, "reset further away than one window: length does not fit");
+    Check(E(W(300, -3)) is null, "reset has passed: old values, no tick");
+    Check(E(W(null, 100)) is null && E(W(300, null)) is null, "unknown length or reset");
+    Check(E(W(1, 0.5)) is null, "placeholder length");
+    Check(E(W(300, 100, balance: true)) is null, "balances have no window");
+});
+
 Run("tray ring: mean of the general weeks – Fable weeks do not dilute it", () =>
 {
     AccountView A(double week, double? fable)

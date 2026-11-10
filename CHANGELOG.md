@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.10.0] - 2026-11-10
+
+### Added
+- **Pace tick.** A thin vertical line on every usage bar marks how much of the window's time
+  has passed; a bar that ends left of it is below the pace of time. A legend line under the
+  summary explains it, the tooltip gives the exact share ("Fenster zu 28 % um"). The tick is
+  the average pace since the window started and purely visual – health, warnings and sorting
+  still follow the forecast (burn rate of the last hour). Windows and Linux.
+- **Glass (Windows 11 22H2 and later).** The popup is a translucent pane over the blurred
+  desktop: the pane shows the most, cards are denser, tinted cards the densest.
+  - The opacity follows the brightness behind the popup (measured on the screen around it,
+    about once a second): translucent over a dark desktop, nearly solid over a white window.
+    The opacities are solved so that every text colour keeps at least 4.5:1 on its surface.
+  - On glass the secondary and alarm text colours are brighter; cards get a light rim.
+  - Setting "Popup als Glas" (default on). Opaque as before on Windows 10, on Windows 11
+    before 22H2, with transparency effects off, in high-contrast mode and in remote sessions.
+  - The blur uses the accent policy of the window compositor: the documented system backdrops
+    (acrylic, mica) turn solid while a window is inactive, which a hover popup always is.
+- `--glass-probe`: on-screen check of the glass look with a test backdrop (the backdrop is
+  drawn by the compositor and cannot be rendered offscreen). It only takes its screenshot
+  when nothing but its own two windows is in the picture.
+
+### Notes
+- Linux keeps the opaque popup; it gets the pace tick and the legend.
+
 ## [1.9.0] - 2026-11-10
 
 ### Added

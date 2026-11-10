@@ -54,6 +54,7 @@ internal sealed class TrayAppContext : ApplicationContext
             _popup.PreferredLocation = new Point(px, py);
         _popup.Canvas.SetSort(_store.Settings.EffectiveSort, _store.Settings.SortDescending);
         _popup.Canvas.SortChanged += (column, descending) => SaveUiSettings(s => s.SetSort(column, descending));
+        Glass.Enabled = _store.Settings.Glass && Glass.Supported; // read when the popup creates its window
 
         _tray = new NotifyIcon
         {
@@ -102,6 +103,9 @@ internal sealed class TrayAppContext : ApplicationContext
     }
 
     public ConfigStore Store => _store;
+
+    /// <summary>The glass setting changed: the popup gets a new window with or without the backdrop.</summary>
+    public void ApplyGlass() => _popup.SetGlass(_store.Settings.Glass && Glass.Supported);
     public PollingEngine Engine => _engine;
 
     /// <summary>
