@@ -72,6 +72,67 @@ else
 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 var failures = 0;
 
+// Diagnosis: print the raw rate-limit headers Anthropic returns for a ping with a given model.
+//   … --headers [--model claude-…] [--only <part of the account name>]
+// Only anthropic-ratelimit-* headers are printed (numbers, states, reset times – no ids, no keys).
+if (args.Contains("--headers"))
+{
+    string? Arg(string name)
+    {
+        var i = Array.IndexOf(args, name);
+        return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+    }
+    var model = Arg("--model");
+    var only = Arg("--only");
+    foreach (var (cfg, key) in accounts)
+    {
+        if (cfg.Provider != ProviderKind.Anthropic) continue;
+        if (only is not null && !cfg.Name.Contains(only, StringComparison.OrdinalIgnoreCase)) continue;
+        var usedModel = model ?? cfg.EffectiveModel;
+        Console.WriteLine(new string('─', 70));
+        Console.WriteLine($"{cfg.Name}  model={usedModel}");
+        try
+        {
+            var (status, headers, body) = await AnthropicPoller.PingAsync(cfg, key, usedModel, http, default);
+            Console.WriteLine($"  HTTP {status}");
+            foreach (var h in headers.Where(h => h.Key.StartsWith("anthropic-ratelimit-", StringComparison.Ordinal))
+                         .OrderBy(h => h.Key, StringComparer.Ordinal))
+                Console.WriteLine($"  {h.Key} = {h.Value}");
+            if (status != 200)
+                Console.WriteLine("  body: " + (body.Length > 240 ? body[..240] : body).ReplaceLineEndings(" "));
+            // --oauth-usage: additionally read the subscription usage endpoint (no tokens spent)
+            if (args.Contains("--oauth-usage") && cfg.Auth == AuthKind.Bearer)
+            {
+                var (ucode, usage) = await AnthropicPoller.GetUsageAsync(cfg, key, http, default);
+                Console.WriteLine($"  /api/oauth/usage → HTTP {ucode}");
+                try
+                {
+                    using var udoc = JsonDocument.Parse(usage);
+                    var filled = udoc.RootElement.EnumerateObject()
+                        .Where(p => p.Value.ValueKind is not (JsonValueKind.Null or JsonValueKind.Array))
+                        .Select(p => p.Name);
+                    Console.WriteLine("    filled: " + string.Join(", ", filled));
+                    if (udoc.RootElement.TryGetProperty("error", out var uerr))
+                        Console.WriteLine("    error: " + uerr.GetRawText());
+                    if (udoc.RootElement.TryGetProperty("limits", out var lims) && lims.ValueKind == JsonValueKind.Array)
+                        foreach (var l in lims.EnumerateArray())
+                            Console.WriteLine("    limit: " + l.GetRawText());
+                }
+                catch (JsonException)
+                {
+                    Console.WriteLine("    " + (usage.Length > 300 ? usage[..300] : usage).ReplaceLineEndings(" "));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            failures++;
+            Console.WriteLine($"  FEHLER: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+    return failures == 0 ? 0 : 1;
+}
+
 foreach (var (cfg, key) in accounts)
 {
     Console.WriteLine(new string('─', 70));

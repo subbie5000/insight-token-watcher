@@ -156,7 +156,6 @@ internal sealed class EngineHost : IDisposable
         var views = _engine.GetView();
         int crit = 0, errors = 0, warn = 0;
         var anyData = false;
-        var weekFractions = new List<double>();
         foreach (var v in views)
         {
             if (v.Snapshot is null) continue;
@@ -167,12 +166,9 @@ internal sealed class EngineHost : IDisposable
                 case Health.Crit: errors++; break;
                 case Health.Warn: warn++; break;
             }
-            // same rule as Windows: the tray gauge shows the mean of all Anthropic week windows
-            if (v.Config.Provider == ProviderKind.Anthropic && v.Display is { } snap)
-                foreach (var w in snap.Windows.Where(w => (w.WindowMinutes ?? 0) >= 1440 && w.UsedFraction is not null))
-                    weekFractions.Add(w.UsedFraction!.Value);
         }
-        var week = weekFractions.Count > 0 ? weekFractions.Average() : (double?)null;
+        // same rule as Windows: the tray gauge shows the mean of all Anthropic week windows
+        var week = TrayGauge.WeekFraction(views);
         // rebuild the icon only when something actually changed (a PNG encode per second otherwise)
         var key = $"{crit}|{errors}|{warn}|{anyData}|{(week is null ? -1 : (int)Math.Round(week.Value * 100))}";
         if (key == _lastIconKey) return;

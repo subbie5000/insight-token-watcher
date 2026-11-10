@@ -85,4 +85,15 @@ public static class Formatting
         if (frac is null) return "–";
         return (frac.Value * 100).ToString("0.#", De) + " %";
     }
+
+    /// <summary>Whole percent for table cells. Never rounds onto the two states the colours
+    /// stand for: "0 %" only when nothing is used, "100 %" only when the limit is reached.</summary>
+    public static string PercentShort(double? frac)
+    {
+        if (frac is not { } f) return "–";
+        if (f <= 0) return "0 %";
+        if (f >= 0.999) return "100 %";
+        if (f < 0.005) return "<1 %";
+        return Math.Min(99, (int)Math.Round(f * 100)).ToString(De) + " %";
+    }
 }

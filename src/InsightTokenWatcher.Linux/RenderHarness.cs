@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using InsightTokenWatcher.Core;
+using InsightTokenWatcher.Demo;
 using SkiaSharp;
 
 namespace InsightTokenWatcher.Linux;
@@ -29,16 +30,16 @@ internal static class RenderHarness
             .SetupWithoutStarting();
 
         var now = new DateTimeOffset(DateTime.Now);
-        var rows = DemoData.Rows(now, tick: 0);
+        var rows = DemoData.Build(now, 0);   // the same accounts as the Windows harness
 
         var win = new PopupWindow();
-        win.Width = PopupCanvas.LogicalWidth * scale;
         win.Position = new PixelPoint(50, 50);
         win.Show();
         win.SetData(rows);
         win.Canvas.Now = now;
         Pump(10);
 
+        var fullScrollable = win.Canvas.IsScrollable;
         var frame = win.CaptureRenderedFrame()!;
         using (var fs = File.Create(Path.Combine(outDir, "popup_full.png")))
             frame.Save(fs);
@@ -106,16 +107,28 @@ internal static class RenderHarness
             Pump(3);
         }
 
-        win.Height = 2000;
+        // every spot of the popup must belong to the canvas for the pointer – also where nothing
+        // but background is drawn (free header space, gap between two cards)
+        string Hit(Point p) => win.InputHitTest(canvas.TranslatePoint(p, win) ?? p)?.GetType().Name ?? "null";
+        var hits = $"header-empty={Hit(new Point(300, 20))} between-titles={Hit(new Point(150, 71))} card-gap={Hit(new Point(100, 200))}";
+
+        var fullWidth = canvas.LogicalWidth;
+        win.Height = canvas.DesiredHeight + 2 * PopupWindow.Frame;
         Pump(4);
         Click(canvas.PinButtonPoint());
         Click(canvas.ColumnTitlePoint(SortColumn.Long));
         Click(canvas.ColumnTitlePoint(SortColumn.Long));
         Click(canvas.ColumnTitlePoint(SortColumn.Long));
         Click(canvas.ColumnTitlePoint(SortColumn.Name));
+        Click(canvas.ColumnTitlePoint(SortColumn.Model));
+        var fableOrder = string.Join(" | ", canvas.RowNames());
+        frame = win.CaptureRenderedFrame()!;
+        using (var fs = File.Create(Path.Combine(outDir, "popup_sorted_fable.png")))
+            frame.Save(fs);
 
         // sorted by week, mouse resting on the title (footer explains the cycle)
         canvas.SetSort(SortColumn.Long, false);
+        var weekOrder = string.Join(" | ", canvas.RowNames());
         win.MouseMove(canvas.TranslatePoint(canvas.ColumnTitlePoint(SortColumn.Long), win) ?? default);
         Pump(6);
         frame = win.CaptureRenderedFrame()!;
@@ -127,10 +140,30 @@ internal static class RenderHarness
         using (var fs = File.Create(Path.Combine(outDir, "popup_sorted_week_desc.png")))
             frame.Save(fs);
 
+        // nobody reports a model limit → two columns at the narrow width
+        canvas.SetSort(SortColumn.None, false);
+        win.MouseMove(new Point(1, 1));
+        win.SetData(DemoData.Build(now, 0, fable: false));
+        win.Canvas.Now = now;
+        win.Height = canvas.DesiredHeight + 2 * PopupWindow.Frame;
+        Pump(6);
+        var twoColumns = $"width={win.Width} height={win.Height} canvas={canvas.Bounds.Width}x{canvas.Bounds.Height} scrollable={canvas.IsScrollable} (expect False)";
+        // Headless renders only when a frame is captured, and after a WIDTH change the first
+        // capture still shows the previous arrangement (one frame behind; measured: bar 161–340
+        // instead of 161–300). A desktop render loop does not have this – take the second frame.
+        win.CaptureRenderedFrame();
+        frame = win.CaptureRenderedFrame()!;
+        using (var fs = File.Create(Path.Combine(outDir, "popup_two_columns.png")))
+            frame.Save(fs);
+
         File.WriteAllText(Path.Combine(outDir, "report.txt"),
-            $"scale={scale} width={win.Width} desiredHeight={win.Canvas.DesiredHeight} rows={rows.Count}\n" +
-            $"click: pinClicks={pins} (expect 1) sorts=[{string.Join(", ", sorts)}] (expect Long-asc, Long-desc, None, Name-asc)\n" +
+            $"scale={scale} width={fullWidth} rows={rows.Count} scrollable={fullScrollable} (expect False)\n" +
+            $"click: pinClicks={pins} (expect 1) sorts=[{string.Join(", ", sorts)}] (expect Long-asc, Long-desc, None, Name-asc, Model-asc)\n" +
+            $"week asc:  {weekOrder}\n" +
+            $"fable asc: {fableOrder}\n" +
+            $"two columns: {twoColumns}\n" +
             $"release event: IsLeftButtonPressed={leftPressedOnRelease} InitialPressMouseButton={initialButton}\n" +
+            $"pointer target: {hits} (expect PopupCanvas everywhere)\n" +
             $"tray icon bitmap: {OpaqueBounds(IconFactory.TrayIconPng(0, 0, 1, true, weekFraction: 0.4))}\n");
 
         return 0;

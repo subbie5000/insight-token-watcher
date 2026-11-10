@@ -18,6 +18,9 @@ internal sealed class PopupWindow : Window
 
     public PopupCanvas Canvas { get; }
 
+    /// <summary>Thickness of the window frame drawn around the canvas (see the Border below).</summary>
+    public const double Frame = 1;
+
     /// <summary>User-parked position (drag). When set and visible on any screen, it wins over the corner anchor.</summary>
     public PixelPoint? PreferredLocation { get; set; }
 
@@ -29,15 +32,15 @@ internal sealed class PopupWindow : Window
         ShowInTaskbar = false;
         TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
         Background = Brushes.Transparent;
-        Width = PopupCanvas.LogicalWidth;
 
         Canvas = new PopupCanvas();
+        Width = Canvas.LogicalWidth + 2 * Frame;
         _chrome = new Border
         {
             Background = Ui.BgBrush,
             CornerRadius = new CornerRadius(10),
             BorderBrush = new SolidColorBrush(Ui.CardBorder),
-            BorderThickness = new Thickness(1),
+            BorderThickness = new Thickness(Frame),
             ClipToBounds = true,
             Child = Canvas
         };
@@ -74,6 +77,7 @@ internal sealed class PopupWindow : Window
     private void ApplyBounds()
     {
         if (Canvas.IsDragging) return; // don't yank the window mid-drag
+        Width = Canvas.LogicalWidth + 2 * Frame;   // wider once an account reports a model limit
 
         // Avalonia: Width/Height are DIPs, screen rects and Position are physical pixels. The old
         // code mixed both, so on a HiDPI screen the popup hung off the right edge; it also kept a
@@ -83,7 +87,9 @@ internal sealed class PopupWindow : Window
         var wa = screen?.WorkingArea ?? new PixelRect(0, 0, 1920, 1040);
         var scale = screen?.Scaling is > 0 and var sc ? sc : 1.0;
 
-        var hDip = Math.Min(Canvas.DesiredHeight, wa.Height / scale * 0.85);
+        // + the frame: without it the canvas was 2 px shorter than its content and always
+        // showed a scrollbar with an almost full thumb
+        var hDip = Math.Min(Canvas.DesiredHeight + 2 * Frame, wa.Height / scale * 0.85);
         var wPx = (int)Math.Ceiling(Width * scale);
         var hPx = (int)Math.Ceiling(hDip * scale);
         var margin = (int)(12 * scale);

@@ -266,11 +266,19 @@ public sealed class PollingEngine : IDisposable
                     rt.Series.Remove(gone);
                 }
 
-                health = snap.Windows.Count == 0
+                // A model-scoped limit (e.g. the Fable week) does not decide whether the account is
+                // usable – every other model still runs. A used-up or tight model limit therefore
+                // marks an otherwise healthy account as "Warn" (amber, own status text), but
+                // never as critical and never with a balloon.
+                var general = GeneralWindows(snap);
+                health = general.Count == 0
                     ? Health.Unknown
-                    : snap.Windows
+                    : general
                         .Select(w => rt.Evals.TryGetValue(w.Key, out var e) ? e.Health : Health.Unknown)
                         .Aggregate(Health.Ok, (a, b) => (Health)Math.Max((int)a, (int)b));
+                if (health == Health.Ok && snap.Windows.Any(w => w.Scope is not null &&
+                        rt.Evals.TryGetValue(w.Key, out var e) && e.Health is Health.Warn or Health.Crit))
+                    health = Health.Warn;
             }
             else
             {
@@ -297,7 +305,7 @@ public sealed class PollingEngine : IDisposable
                 critView = ToViewLocked(rt);
                 if (snap.Ok)
                 {
-                    var worst = snap.Windows.FirstOrDefault(w =>
+                    var worst = GeneralWindows(snap).FirstOrDefault(w =>
                         rt.Evals.TryGetValue(w.Key, out var e) && e.Health == Health.Crit);
                     critMessage = worst is not null && rt.Evals.TryGetValue(worst.Key, out var ev)
                         ? $"{worst.Label}: {ev.Verdict}"
@@ -316,6 +324,12 @@ public sealed class PollingEngine : IDisposable
 
         if (critView is not null) CritEntered?.Invoke(critView, critMessage);
         Updated?.Invoke(snap.AccountId);
+    }
+
+    private static List<QuotaWindow> GeneralWindows(AccountSnapshot snap)
+    {
+        var general = snap.Windows.Where(w => w.Scope is null).ToList();
+        return general.Count > 0 ? general : snap.Windows;
     }
 
     internal static FailureKind ClassifyFailure(string? error)

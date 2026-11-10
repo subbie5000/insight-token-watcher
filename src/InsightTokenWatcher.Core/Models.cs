@@ -78,6 +78,10 @@ public sealed class QuotaWindow
 
     /// <summary>Window length in minutes (300 = 5 h, 10080 = week); null = unknown.</summary>
     public double? WindowMinutes { get; set; }
+
+    /// <summary>Set when the limit only applies to one model family (e.g. "Fable"): such a window
+    /// has its own column and does not decide whether the account as a whole is usable.</summary>
+    public string? Scope { get; set; }
 }
 
 public sealed class AccountSnapshot

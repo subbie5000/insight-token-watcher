@@ -132,54 +132,85 @@ internal static class IconFactory
     }
 
     /// <summary>Button glyphs as vector paths – no icon-font dependency on Linux.</summary>
+    /// <summary>Header button glyphs, drawn as vectors (no icon font on Linux). They end up at
+    /// about 19 px, so the shapes are simple and the strokes strong: thin, detached strokes
+    /// read as "sun" instead of gear and "A" instead of pin at that size.</summary>
     public static void DrawGlyph(SKCanvas c, float x, float y, float size, Glyph glyph, SKColor color)
     {
-        using var p = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(1.6f, size * 0.075f), Color = color };
+        var sw = Math.Max(1.6f, size * 0.10f);
+        using var stroke = new SKPaint
+        {
+            IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = sw, Color = color,
+            StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round
+        };
+        using var fill = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill, Color = color };
+        float X(float f) => x + size * f;
+        float Y(float f) => y + size * f;
+
         switch (glyph)
         {
             case Glyph.Refresh:
-                // 270° arc + arrowhead
-                var r = new SKRect(x + size * 0.15f, y + size * 0.15f, x + size * 0.85f, y + size * 0.85f);
-                using (var arc = new SKPath())
-                {
-                    arc.AddArc(r, -30, 300);
-                    c.DrawPath(arc, p);
-                }
-                var ax = x + size * 0.80f; var ay = y + size * 0.30f;
-                using (var head = new SKPath())
-                {
-                    head.MoveTo(ax, ay); head.LineTo(ax - size * 0.16f, ay - size * 0.10f); head.LineTo(ax - size * 0.10f, ay - size * 0.20f);
-                    head.Close();
-                    c.DrawPath(head, new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill, Color = color });
-                }
+            {
+                // open circle with a solid arrowhead at its end
+                var r = new SKRect(X(0.16f), Y(0.16f), X(0.84f), Y(0.84f));
+                using var arc = new SKPath();
+                arc.AddArc(r, -20, 285);
+                using var ringStroke = stroke.Clone();
+                ringStroke.StrokeWidth = sw * 1.2f; // a thin circle goes grainy at 19 px
+                c.DrawPath(arc, ringStroke);
+                // arc ends at -20° + 285° = 265° (just left of 12 o'clock), moving right
+                var a = 265f * MathF.PI / 180f;
+                var ex = X(0.5f) + size * 0.34f * MathF.Cos(a);
+                var ey = Y(0.5f) + size * 0.34f * MathF.Sin(a);
+                using var head = new SKPath();
+                head.MoveTo(ex + size * 0.20f, ey + size * 0.02f);
+                head.LineTo(ex - size * 0.04f, ey - size * 0.17f);
+                head.LineTo(ex - size * 0.04f, ey + size * 0.19f);
+                head.Close();
+                c.DrawPath(head, fill);
                 break;
+            }
             case Glyph.Settings:
-                var cx = x + size / 2f; var cy = y + size / 2f;
-                c.DrawCircle(cx, cy, size * 0.22f, p);
-                for (var i = 0; i < 8; i++)
+            {
+                // gear: ring with six teeth that sit ON the ring, hole in the middle (eight
+                // teeth crumble at this size)
+                var cx = X(0.5f);
+                var cy = Y(0.5f);
+                using var tooth = new SKPaint
                 {
-                    var a = (float)(i * Math.PI / 4);
-                    var r1 = size * 0.34f; var r2 = size * 0.45f;
-                    c.DrawLine(cx + r1 * MathF.Cos(a), cy + r1 * MathF.Sin(a), cx + r2 * MathF.Cos(a), cy + r2 * MathF.Sin(a), p);
+                    IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = size * 0.18f, Color = color,
+                    StrokeCap = SKStrokeCap.Butt
+                };
+                for (var i = 0; i < 6; i++)
+                {
+                    var a = i * MathF.PI / 3 + MathF.PI / 6;
+                    c.DrawLine(cx + size * 0.27f * MathF.Cos(a), cy + size * 0.27f * MathF.Sin(a),
+                        cx + size * 0.44f * MathF.Cos(a), cy + size * 0.44f * MathF.Sin(a), tooth);
                 }
+                using var ring = new SKPaint
+                {
+                    IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = size * 0.13f, Color = color
+                };
+                c.DrawCircle(cx, cy, size * 0.25f, ring);
                 break;
+            }
             case Glyph.Pin:
             case Glyph.Pinned:
-                using (var pin = new SKPath())
-                {
-                    var pxc = x + size / 2f; var pyc = y + size * 0.52f;
-                    pin.MoveTo(pxc, y + size * 0.14f);            // head top
-                    pin.LineTo(pxc, y + size * 0.34f);            // needle down
-                    pin.LineTo(x + size * 0.30f, y + size * 0.72f); // left arm
-                    pin.LineTo(pxc, pyc + size * 0.24f);           // via body
-                    pin.LineTo(x + size * 0.70f, y + size * 0.72f); // right arm
-                    pin.Close();
-                    c.DrawPath(pin, new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = p.StrokeWidth, Color = color, StrokeJoin = SKStrokeJoin.Round });
-                }
-                if (glyph == Glyph.Pinned)
-                    c.DrawCircle(x + size / 2f, y + size * 0.22f, size * 0.10f,
-                        new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill, Color = color });
+            {
+                // pushpin seen from the side: cap, body widening to a plate, needle
+                using var body = new SKPath();
+                body.MoveTo(X(0.36f), Y(0.14f));
+                body.LineTo(X(0.64f), Y(0.14f));
+                body.LineTo(X(0.60f), Y(0.44f));
+                body.LineTo(X(0.76f), Y(0.60f));
+                body.LineTo(X(0.24f), Y(0.60f));
+                body.LineTo(X(0.40f), Y(0.44f));
+                body.Close();
+                if (glyph == Glyph.Pinned) c.DrawPath(body, fill);
+                c.DrawPath(body, stroke);
+                c.DrawLine(X(0.5f), Y(0.62f), X(0.5f), Y(0.90f), stroke);
                 break;
+            }
         }
     }
 

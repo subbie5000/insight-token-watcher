@@ -107,7 +107,7 @@ internal sealed class PopupForm : Form
     private void ApplyBounds()
     {
         if (Canvas.IsDragging) return; // don't yank the form mid-drag
-        var w = Theme.S(PopupCanvas.LogicalWidth);
+        var w = Theme.S(Canvas.LogicalWidth);
 
         // parked by the user via drag: keep that spot unless the monitor is gone
         if (PreferredLocation is { } p)

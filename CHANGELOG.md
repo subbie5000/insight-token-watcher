@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.0] - 2026-11-10
+
+### Added
+- **Fable limit.** Claude subscriptions have a separate weekly limit for the Fable model.
+  It is read from the subscription's usage endpoint (`GET /api/oauth/usage`, every 5 min,
+  no tokens spent). Setup tokens may not read that endpoint; for them a 1-token request
+  with the Fable model returns the limit as rate-limit header `7d_oi` (every 15 min).
+  - A third column **FABLE** appears as soon as an account reports the limit (the popup
+    grows from 480 to 560 px); it sorts like the other columns.
+  - A used-up or tight Fable week marks the account amber with the status "FABLE LEER" /
+    "FABLE KNAPP" — never as critical and without a balloon: every other model still runs.
+  - The tray ring keeps showing the general weekly usage; Fable weeks do not dilute it.
+- CLI: `--headers [--model …] [--only …] [--oauth-usage]` prints the raw rate-limit headers
+  and the usage limits Anthropic returns (numbers and states only).
+
+### Changed
+- **New look for the popup** (Windows and Linux): one card per account instead of lines
+  plus special cards; a healthy account stays quiet (second line = provider, no green
+  "OK" on every row), only exceptions get a coloured status word; the header summary uses
+  coloured dots with grey text; larger values, stronger bars, whole percentages in the
+  cells; buttons on the title line. Colour rules are unchanged.
+- Linux now draws the same design as Windows (cards, amber tint for problem rows, status
+  words, countdown next to the value), new button glyphs, and its tooltip lists every
+  window with its reset time. The auto-scaled trend line under each row is gone — it made
+  a 1 % change look like a ramp; the forecast line says the same more precisely.
+- Anthropic subscription pings identify as Claude Code (required for non-Haiku models).
+
+### Fixed
+- Linux: pointer events only arrived where something was drawn — clicks on empty header
+  space or between column titles fell through, so dragging the popup by its title needed a
+  glyph under the pointer. The whole surface is interactive now.
+- Linux: the popup always showed a scrollbar with an almost full thumb (the window frame
+  was not part of the height).
+- Tooltip (Windows): a healthy window said "reicht knapp" even when it lasted far beyond
+  its reset.
+- "Reichweite" / "Guthaben" captions follow their value instead of colliding with wide
+  values in narrow cells.
+
 ## [1.8.0] - 2026-11-08
 
 ### Added

@@ -52,12 +52,8 @@ internal sealed class TrayAppContext : ApplicationContext
         };
         if (_store.Settings.PopupX is { } px && _store.Settings.PopupY is { } py)
             _popup.PreferredLocation = new Point(px, py);
-        _popup.Canvas.SetSort(_store.Settings.SortColumn, _store.Settings.SortDescending);
-        _popup.Canvas.SortChanged += (column, descending) => SaveUiSettings(s =>
-        {
-            s.SortColumn = column;
-            s.SortDescending = descending;
-        });
+        _popup.Canvas.SetSort(_store.Settings.EffectiveSort, _store.Settings.SortDescending);
+        _popup.Canvas.SortChanged += (column, descending) => SaveUiSettings(s => s.SetSort(column, descending));
 
         _tray = new NotifyIcon
         {
@@ -249,20 +245,15 @@ internal sealed class TrayAppContext : ApplicationContext
         var views = _engine.GetView();
         int crit = 0, warn = 0;
         var anyData = false;
-        var weekFractions = new List<double>();
         foreach (var v in views)
         {
             if (v.Display is not null) anyData = true;
             if (v.Health == Health.Crit) crit++;
             else if (v.Health == Health.Warn && !v.IsStale) warn++;
-
-            // Dominic, 28.10.2026: the tray icon shows the mean of all Anthropic week
-            // windows ("wie viel von meinen Opus-Abos ist runter")
-            if (v.Config.Provider == ProviderKind.Anthropic && v.Display is { } snap)
-                foreach (var w in snap.Windows.Where(w => (w.WindowMinutes ?? 0) >= 1440 && w.UsedFraction is not null))
-                    weekFractions.Add(w.UsedFraction!.Value);
         }
-        var week = weekFractions.Count > 0 ? weekFractions.Average() : (double?)null;
+        // Dominic, 28.10.2026: the tray icon shows the mean of all Anthropic week windows
+        // ("wie viel von meinen Opus-Abos ist runter")
+        var week = TrayGauge.WeekFraction(views);
         var size = Math.Max(16, SystemInformation.SmallIconSize.Width);
         var pct = week is null ? -1 : (int)Math.Round(week.Value * 100);
         var key = $"{crit}|{warn}|{anyData}|{size}|{pct}";

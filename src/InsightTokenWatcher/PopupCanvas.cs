@@ -6,23 +6,25 @@ namespace InsightTokenWatcher;
 
 /// <summary>
 /// The whole popup as ONE owner-drawn surface: fixed header with column titles, scrollable
-/// account table, fixed footer. No child controls → no handle churn, no AutoScroll drift,
-/// smooth custom scrolling. Columns: account | short window (5 h) | long window (week).
-/// Balance accounts use the same two cells (amount | runway). Details live in a tooltip.
+/// list of account cards, fixed footer. No child controls → no handle churn, no AutoScroll
+/// drift, smooth custom scrolling. Columns: account | short window (5 h) | long window (week)
+/// and – when an account reports one – the model-scoped week (e.g. Fable). Balance accounts
+/// use the first two cells (amount | runway). Details live in a tooltip.
 /// </summary>
 internal sealed class PopupCanvas : Control
 {
-    public const float LogicalWidth = 480;
+    /// <summary>Logical width: wider once the model column is shown.</summary>
+    public float LogicalWidth => _modelScope is null ? 480 : 560;
 
-    private const float TitleH = 56, ColumnsH = 24, HeaderH = TitleH + ColumnsH, FooterH = 30;
-    private const float RowBase = 52, VerdictH = 20, ExtraH = 20;
-    private const float PadX = 16, NameW = 150, CellGap = 16;
-    private const float BodyPadTop = 2, BodyPadBottom = 6, ButtonSize = 30;
+    private const float TitleH = 58, ColumnsH = 26, HeaderH = TitleH + ColumnsH, FooterH = 28;
+    private const float RowBase = 48, RowGap = 4, VerdictH = 20, ExtraH = 20;
+    private const float OuterX = 8, CardPadX = 12, NameW = 128, NameGap = 12, CellGap = 16, ModelW = 92;
+    private const float BodyPadTop = 0, BodyPadBottom = 8, ButtonSize = 28;
 
     private const string ShortColumn = "5 h";
     private const string LongColumn = "Woche";
 
-    private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header, SortName, SortShort, SortLong }
+    private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header, SortName, SortShort, SortLong, SortModel }
     private enum RowKind { Data, Loading, Error }
     private enum RowState { Ok, Warn, Crit, Error, Stale, Pending }
 
@@ -42,6 +44,7 @@ internal sealed class PopupCanvas : Control
 
     private readonly List<RowInfo> _rows = new();
     private IReadOnlyList<AccountView> _views = Array.Empty<AccountView>();
+    private string? _modelScope;   // model family of the third column ("Fable"); null = no such column
     private int _contentH;
     private float _scroll, _scrollTarget;
     private readonly System.Windows.Forms.Timer _anim = new() { Interval = 15 };
@@ -74,7 +77,7 @@ internal sealed class PopupCanvas : Control
     /// <summary>Fired after a click on a column title changed the order (to persist it).</summary>
     public event Action<SortColumn, bool>? SortChanged;
 
-    /// <summary>Current order (click on KONTO / 5 STUNDEN / WOCHE cycles ascending → descending → default).</summary>
+    /// <summary>Current order (a click on a column title cycles ascending → descending → default).</summary>
     public SortColumn SortBy { get; private set; }
     public bool SortDescending { get; private set; }
 
@@ -161,6 +164,7 @@ internal sealed class PopupCanvas : Control
         _rows.Clear();
         var y = 0;
         var now = DateTimeOffset.UtcNow;
+        _modelScope = WindowLayout.ColumnScope(_views);
         foreach (var v in AccountSort.Apply(_views, SortBy, SortDescending, now))
         {
             var row = new RowInfo { View = v, Display = v.Display };
@@ -171,7 +175,7 @@ internal sealed class PopupCanvas : Control
             else
             {
                 row.Kind = RowKind.Data;
-                row.Layout = WindowLayout.Classify(row.Display.Windows);
+                row.Layout = WindowLayout.Classify(row.Display.Windows, _modelScope);
                 row.Stale = v.IsStale;
             }
             DescribeStatus(v, row);
@@ -186,10 +190,10 @@ internal sealed class PopupCanvas : Control
             }
             row.Y = y;
             row.H = h;
-            y += h;
+            y += h + S(RowGap);
             _rows.Add(row);
         }
-        _contentH = _rows.Count == 0 ? S(84) : y + S(BodyPadTop) + S(BodyPadBottom);
+        _contentH = _rows.Count == 0 ? S(84) : y - S(RowGap) + S(BodyPadTop) + S(BodyPadBottom);
     }
 
     private static void DescribeStatus(AccountView v, RowInfo row)
@@ -210,10 +214,14 @@ internal sealed class PopupCanvas : Control
                 _ => RowState.Pending
             }
         };
+        // a healthy row stays quiet: what kind of account it is, in grey. Only exceptions get a
+        // coloured word – and a model limit names itself ("FABLE LEER") instead of "KNAPP".
         (row.StatusText, row.StatusColor) = row.State switch
         {
-            RowState.Ok => ("OK", Theme.Ok),
-            RowState.Warn => ("KNAPP", Theme.Warn),
+            RowState.Ok => (WindowLayout.Subline(v.Config, row.Layout), Theme.Faint),
+            RowState.Warn => (WindowLayout.ModelLimitBehind(v) is { } limit
+                ? WindowLayout.ModelLimitStatus(limit)
+                : "KNAPP", Theme.Warn),
             RowState.Crit => ("KRITISCH", Theme.Crit),
             RowState.Error => ("FEHLER", Theme.Crit),
             RowState.Stale => v.Failure == FailureKind.AuthExpired
@@ -244,16 +252,23 @@ internal sealed class PopupCanvas : Control
             };
         }
 
+        // The line explains the row's status, which follows the general windows. A model limit
+        // (Fable) only gets the line when no general window has something to say.
         QuotaWindow? worstWin = null;
         WindowEvaluation? worst = null;
-        foreach (var w in display.Windows)
+        foreach (var scoped in new[] { false, true })
         {
-            if (!v.Evals.TryGetValue(w.Key, out var ev) || ev.Health is not (Health.Warn or Health.Crit)) continue;
-            if (worst is null || ev.Health > worst.Health)
+            foreach (var w in display.Windows)
             {
-                worst = ev;
-                worstWin = w;
+                if (w.Scope is not null != scoped) continue;
+                if (!v.Evals.TryGetValue(w.Key, out var ev) || ev.Health is not (Health.Warn or Health.Crit)) continue;
+                if (worst is null || ev.Health > worst.Health)
+                {
+                    worst = ev;
+                    worstWin = w;
+                }
             }
+            if (worst is not null) break;
         }
         if (worst is null || worstWin is null) return null;
         var text = LiveVerdict(worstWin, worst, display.AtUtc, now);
@@ -274,9 +289,12 @@ internal sealed class PopupCanvas : Control
             return ttr is { } left && left > TimeSpan.Zero ? $"Limit erreicht – Reset in {Formatting.Span(left)}" : "Limit erreicht";
         if (tte is null) return ev.Verdict;
         if (ttr is null || ttr <= TimeSpan.Zero) return $"noch {Formatting.Span(tte)} bei aktuellem Verbrauch";
-        return tte < ttr
-            ? $"leer in {Formatting.Span(tte)} – Reset erst in {Formatting.Span(ttr)}!"
-            : $"reicht knapp – leer in {Formatting.Span(tte)}, Reset in {Formatting.Span(ttr)}";
+        if (tte < ttr) return $"leer in {Formatting.Span(tte)} – Reset erst in {Formatting.Span(ttr)}!";
+        // the tooltip shows this line for healthy windows too – "reicht knapp" for a window that
+        // lasts ten times longer than its reset was wrong
+        return ev.Health == Health.Warn
+            ? $"reicht knapp – leer in {Formatting.Span(tte)}, Reset in {Formatting.Span(ttr)}"
+            : $"reicht bis zum Reset – leer erst in {Formatting.Span(tte)}, Reset in {Formatting.Span(ttr)}";
     }
 
     private static string ShortError(string? error)
@@ -296,17 +314,26 @@ internal sealed class PopupCanvas : Control
 
     private float MaxScroll(int bodyHeight) => Math.Max(0, _contentH - bodyHeight);
 
-    private static int NameX => S(PadX) + S(12);
-    private static int NameWidth => S(NameW) - S(16);
-    private static int CellsX => S(PadX) + S(NameW);
-    private static int CellsWidth(int w) => w - CellsX - S(PadX) - S(6);
-    private static int CellWidth(int w) => (CellsWidth(w) - S(CellGap)) / 2;
+    private static int NameX => S(OuterX) + S(CardPadX);
+    private static int NameWidth => S(NameW);
+    private static int CellsX => NameX + S(NameW) + S(NameGap);
+    private static int CellsWidth(int w) => w - CellsX - S(OuterX) - S(CardPadX);
+
+    /// <summary>Column x positions and widths: two equal cells, plus the narrower model cell.</summary>
+    private (int x1, int x2, int x3, int cw, int mw) Columns(int w)
+    {
+        var mw = _modelScope is null ? 0 : S(ModelW);
+        var gaps = _modelScope is null ? S(CellGap) : 2 * S(CellGap);
+        var cw = (CellsWidth(w) - gaps - mw) / 2;
+        var x2 = CellsX + cw + S(CellGap);
+        return (CellsX, x2, x2 + cw + S(CellGap), cw, mw);
+    }
 
     private (Rectangle pin, Rectangle refresh, Rectangle settings) HeaderButtons(int w)
     {
         var bs = S(ButtonSize);
-        var y = S(13);
-        var settings = new Rectangle(w - S(PadX) - bs + S(4), y, bs, bs);
+        var y = S(9); // on the title line – the summary below gets the full width
+        var settings = new Rectangle(w - S(OuterX) - S(4) - bs, y, bs, bs);
         var refresh = new Rectangle(settings.X - bs - S(2), y, bs, bs);
         var pin = new Rectangle(refresh.X - bs - S(2), y, bs, bs);
         return (pin, refresh, settings);
@@ -320,7 +347,8 @@ internal sealed class PopupCanvas : Control
         var thumbY = body.Top + S(4) + (int)((trackH - thumbH) * (max <= 0 ? 0 : _scroll / max));
         var active = _hover == Zone.Scrollbar || _dragging;
         var tw = active ? S(6) : S(4);
-        return (new Rectangle(body.Right - S(4) - tw, thumbY, tw, thumbH), trackH, thumbH, max);
+        // in the gutter right of the cards
+        return (new Rectangle(body.Right - S(2) - tw, thumbY, tw, thumbH), trackH, thumbH, max);
     }
 
     private Zone HitTest(Point p, out int row)
@@ -334,11 +362,14 @@ internal sealed class PopupCanvas : Control
         var body = BodyRect(ClientSize);
         if (p.Y >= S(TitleH) && p.Y < S(HeaderH)) // column titles: click sorts
         {
-            if (p.X < CellsX - S(CellGap) / 2) return Zone.SortName;
-            return p.X < CellsX + CellWidth(ClientSize.Width) + S(CellGap) / 2 ? Zone.SortShort : Zone.SortLong;
+            var (x1, x2, x3, _, mw) = Columns(ClientSize.Width);
+            var half = S(CellGap) / 2;
+            if (p.X < x1 - half) return Zone.SortName;
+            if (p.X < x2 - half) return Zone.SortShort;
+            return mw == 0 || p.X < x3 - half ? Zone.SortLong : Zone.SortModel;
         }
         if (!body.Contains(p)) return p.Y < S(HeaderH) ? Zone.Header : Zone.None;
-        if (MaxScroll(body.Height) > 0 && p.X >= body.Right - S(14)) return Zone.Scrollbar;
+        if (MaxScroll(body.Height) > 0 && p.X >= body.Right - S(OuterX)) return Zone.Scrollbar;
 
         var cy = p.Y - body.Top + (int)Math.Round(_scroll) - S(BodyPadTop);
         for (var i = 0; i < _rows.Count; i++)
@@ -375,7 +406,7 @@ internal sealed class PopupCanvas : Control
             var row = _rows[i];
             var y = top + row.Y;
             if (y > body.Bottom || y + row.H < body.Top) continue;
-            DrawRow(g, row, y, w, now, i == _hoverRow && _hover == Zone.Row, i == _rows.Count - 1);
+            DrawRow(g, row, y, w, now, i == _hoverRow && _hover == Zone.Row);
         }
         g.Restore(state);
 
@@ -392,34 +423,33 @@ internal sealed class PopupCanvas : Control
         using (var bg = new SolidBrush(Theme.Bg))
             g.FillRectangle(bg, 0, 0, w, hh);
 
-        // brand mark (same gauge as the healthy tray icon)
-        var mark = new RectangleF(S(PadX) + S(1), S(13), S(16), S(16));
-        using (var track = new Pen(Theme.Track, S(2.6f)))
+        // brand mark (the tray gauge without a number)
+        var mark = new RectangleF(NameX + S(1), S(14), S(17), S(17));
+        using (var track = new Pen(Theme.TrackOnCard, S(2.8f)))
             g.DrawEllipse(track, mark);
-        using (var arc = new Pen(Theme.Ok, S(2.6f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+        using (var arc = new Pen(Theme.Ok, S(2.8f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             g.DrawArc(arc, mark, -90, 250);
 
-        Gfx.Text(g, "Insight Token Watcher", Theme.FTitle, new Rectangle(S(PadX) + S(26), S(9), S(230), S(22)), Theme.Text);
-        DrawSummary(g, S(PadX) + S(26), S(32));
-
         var (pin, refresh, settings) = HeaderButtons(w);
+        var textX = NameX + S(28);
+        Gfx.Text(g, "Insight Token Watcher", Theme.FTitle, new Rectangle(textX, S(11), pin.Left - textX - S(8), S(22)), Theme.Text);
+        DrawSummary(g, textX, S(38), w - NameX);
+
         DrawButton(g, pin, Pinned ? Theme.GlyphPinned : Theme.GlyphPin, "P", _hover == Zone.Pin,
             Pinned ? Theme.Ok : Theme.Muted);
         DrawButton(g, refresh, Theme.GlyphRefresh, "R", _hover == Zone.Refresh, Theme.Muted);
         DrawButton(g, settings, Theme.GlyphSettings, "S", _hover == Zone.Settings, Theme.Muted);
 
         // column titles (sticky) – a click sorts by that column
-        var cy = S(TitleH);
-        using (var pen = new Pen(Theme.Divider))
-            g.DrawLine(pen, S(PadX), cy, w - S(PadX), cy);
-        var ty = cy + S(5);
-        var cw = CellWidth(w);
+        var ty = S(TitleH) + S(3);
+        var (x1, x2, x3, cw, mw) = Columns(w);
         DrawColumnTitle(g, "KONTO", SortColumn.Name, Zone.SortName, new Rectangle(NameX, ty, NameWidth, S(15)));
-        DrawColumnTitle(g, "5 STUNDEN", SortColumn.Short, Zone.SortShort, new Rectangle(CellsX, ty, cw, S(15)));
-        DrawColumnTitle(g, "WOCHE", SortColumn.Long, Zone.SortLong, new Rectangle(CellsX + cw + S(CellGap), ty, cw, S(15)));
+        DrawColumnTitle(g, "5 STUNDEN", SortColumn.Short, Zone.SortShort, new Rectangle(x1, ty, cw, S(15)));
+        DrawColumnTitle(g, "WOCHE", SortColumn.Long, Zone.SortLong, new Rectangle(x2, ty, cw, S(15)));
+        if (mw > 0)
+            DrawColumnTitle(g, _modelScope!.ToUpperInvariant(), SortColumn.Model, Zone.SortModel,
+                new Rectangle(x3, ty, mw, S(15)));
 
-        using (var pen = new Pen(Theme.Divider))
-            g.DrawLine(pen, 0, hh - 1, w, hh - 1);
         if (shadow)
         {
             var sr = new Rectangle(0, hh, w, S(10));
@@ -456,7 +486,10 @@ internal sealed class PopupCanvas : Control
         ? descending ? "Z–A" : "A–Z"
         : descending ? "zuletzt leer" : "zuerst leer";
 
-    private void DrawSummary(Graphics g, int x, int y)
+    /// <summary>"13 Konten" plus one entry per state that occurs: a coloured dot carries the
+    /// state, the text stays grey – five coloured words read as a colour band. Entries that
+    /// would not fit the width are left out, least urgent first.</summary>
+    private void DrawSummary(Graphics g, int x, int y, int limit)
     {
         int crit = 0, errors = 0, warn = 0, stale = 0, ok = 0;
         foreach (var r in _rows)
@@ -469,23 +502,27 @@ internal sealed class PopupCanvas : Control
                 case RowState.Ok: ok++; break;
             }
 
-        var parts = new List<(string text, Color color)> { ($"{_rows.Count} Konten", Theme.Muted) };
+        var total = $"{_rows.Count} Konten";
+        var cx = x;
+        var tw = Gfx.Measure(g, total, Theme.FSmall);
+        Gfx.Text(g, total, Theme.FSmall, new Rectangle(cx, y, tw + S(2), S(16)), Theme.Muted);
+        cx += tw;
+
+        var parts = new List<(string text, Color dot)>();
         if (crit > 0) parts.Add(($"{crit} kritisch", Theme.Crit));
         if (errors > 0) parts.Add(($"{errors} Fehler", Theme.Crit));
         if (warn > 0) parts.Add(($"{warn} knapp", Theme.Warn));
-        if (stale > 0) parts.Add(($"{stale} veraltet", Theme.Muted));
+        if (stale > 0) parts.Add(($"{stale} veraltet", Theme.Stale));
         if (ok > 0) parts.Add(($"{ok} OK", Theme.Ok));
-
-        var cx = x;
-        for (var i = 0; i < parts.Count; i++)
+        foreach (var (text, dot) in parts)
         {
-            if (i > 0)
-            {
-                Gfx.Text(g, "·", Theme.FSmall, new Rectangle(cx + S(5), y, S(10), S(16)), Theme.Faint);
-                cx += S(14);
-            }
-            var tw = Gfx.Measure(g, parts[i].text, Theme.FSmall);
-            Gfx.Text(g, parts[i].text, Theme.FSmall, new Rectangle(cx, y, tw + S(2), S(16)), parts[i].color);
+            tw = Gfx.Measure(g, text, Theme.FSmall);
+            if (cx + S(22) + tw > limit) break;
+            cx += S(12);
+            using (var b = new SolidBrush(dot))
+                g.FillEllipse(b, cx, y + S(5.5f), S(6), S(6));
+            cx += S(10);
+            Gfx.Text(g, text, Theme.FSmall, new Rectangle(cx, y, tw + S(2), S(16)), Theme.Muted);
             cx += tw;
         }
     }
@@ -507,17 +544,18 @@ internal sealed class PopupCanvas : Control
         using (var pen = new Pen(Theme.Divider))
             g.DrawLine(pen, 0, top, w, top);
 
-        var area = new Rectangle(S(PadX), top, w - 2 * S(PadX), fh);
+        var area = new Rectangle(NameX, top, w - 2 * NameX, fh);
         Gfx.Text(g, $"Stand {Stamp:HH:mm:ss}", Theme.FTiny, area, Theme.Faint, TextFormatFlags.VerticalCenter);
+        var sortHover = _hover is Zone.SortName or Zone.SortShort or Zone.SortLong or Zone.SortModel;
         var hint = _hover switch
         {
             Zone.SortName => "Klick sortiert: A–Z → Z–A → Standard",
-            Zone.SortShort or Zone.SortLong => "Klick sortiert: zuerst leer → zuletzt leer → Standard",
+            Zone.SortShort or Zone.SortLong or Zone.SortModel => "Klick sortiert: zuerst leer → zuletzt leer → Standard",
             _ when Pinned => "Angeheftet – Pin oder Tray-Icon zum Lösen",
             _ => "Titel ziehen = parken · Spaltenkopf = sortieren"
         };
-        var hintColor = Pinned && _hover is not (Zone.SortName or Zone.SortShort or Zone.SortLong) ? Theme.Ok : Theme.Faint;
-        Gfx.Text(g, hint, Theme.FTiny, area, hintColor, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+        Gfx.Text(g, hint, Theme.FTiny, area, Pinned && !sortHover ? Theme.Ok : Theme.Faint,
+            TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
     }
 
     private void DrawScrollbar(Graphics g, Rectangle body)
@@ -528,61 +566,61 @@ internal sealed class PopupCanvas : Control
         Gfx.FillRound(g, Color.FromArgb(active ? 120 : 64, 205, 210, 220), thumb, thumb.Width / 2f);
     }
 
-    private void DrawRow(Graphics g, RowInfo row, int y, int w, DateTimeOffset now, bool hover, bool last)
+    /// <summary>One account = one card. Every row has the same shape; a problem only changes the
+    /// tint (amber, Dominic 28.10.2026: also for critical/error – red stays for text and bars).</summary>
+    private void DrawRow(Graphics g, RowInfo row, int y, int w, DateTimeOffset now, bool hover)
     {
         var v = row.View;
-        var bgRect = new RectangleF(S(6), y + S(2), w - S(12), row.H - S(4));
+        var card = new RectangleF(S(OuterX), y, w - 2 * S(OuterX), row.H);
+        Gfx.FillRound(g, Theme.Card, card, S(8));
         var tint = row.State switch
         {
-            // 28.10.2026 (Dominic): critical/error rows tint amber instead of red – red stays
-            // for text and bars only; row text stays white
-            RowState.Crit or RowState.Error => Color.FromArgb(20, Theme.Warn),
-            RowState.Warn => Color.FromArgb(16, Theme.Warn),
+            RowState.Crit or RowState.Error => Color.FromArgb(30, Theme.Warn),
+            RowState.Warn => Color.FromArgb(20, Theme.Warn),
             _ => Color.Empty
         };
-        if (!tint.IsEmpty) Gfx.FillRound(g, tint, bgRect, S(8));
-        if (hover) Gfx.FillRound(g, Color.FromArgb(16, 255, 255, 255), bgRect, S(8));
+        if (!tint.IsEmpty) Gfx.FillRound(g, tint, card, S(8));
+        if (hover) Gfx.FillRound(g, Color.FromArgb(14, 255, 255, 255), card, S(8));
 
-        // provider stripe
-        var stripeColor = row.Stale || row.State == RowState.Pending ? Theme.Stale : Theme.ProviderColor(v.Config.Provider);
-        Gfx.FillRound(g, stripeColor, new RectangleF(S(PadX), y + S(11), S(3), S(RowBase) - S(22)), S(1.5f));
-
-        // name + status
-        Gfx.Text(g, v.Config.Name, Theme.FName, new Rectangle(NameX, y + S(9), NameWidth, S(19)),
+        // name + second line (provider, or the state when something is wrong)
+        Gfx.Text(g, v.Config.Name, Theme.FName, new Rectangle(NameX, y + S(7), NameWidth, S(18)),
             row.Stale ? Theme.Muted : Theme.Text);
-        var sy = y + S(30);
-        Gfx.Text(g, row.StatusText, Theme.FSmall, new Rectangle(NameX, sy, NameWidth, S(16)), row.StatusColor);
+        var sy = y + S(26);
+        Gfx.Text(g, row.StatusText, Theme.FTiny, new Rectangle(NameX, sy, NameWidth, S(15)), row.StatusColor);
         if (v.Polling)
         {
-            var dx = Math.Min(NameX + Gfx.Measure(g, row.StatusText, Theme.FSmall) + S(7), NameX + NameWidth - S(4));
+            var dx = Math.Min(NameX + Gfx.Measure(g, row.StatusText, Theme.FTiny) + S(7), NameX + NameWidth - S(4));
             Gfx.FillRound(g, Theme.Muted, new RectangleF(dx, sy + S(6), S(4), S(4)), S(2));
         }
 
-        var cw = CellWidth(w);
+        var (x1, x2, x3, cw, mw) = Columns(w);
         var cellsW = CellsWidth(w);
         switch (row.Kind)
         {
             case RowKind.Loading:
-                Gfx.Text(g, "Erste Abfrage läuft …", Theme.FSmall, new Rectangle(CellsX, y + S(18), cellsW, S(16)), Theme.Muted);
+                Gfx.Text(g, "Erste Abfrage läuft …", Theme.FSmall, new Rectangle(x1, y + S(16), cellsW, S(16)), Theme.Muted);
                 break;
             case RowKind.Error:
                 TextRenderer.DrawText(g, ShortError(v.Snapshot?.Error), Theme.FSmall,
-                    new Rectangle(CellsX, y + S(10), cellsW, S(36)), Theme.Crit,
+                    new Rectangle(x1, y + S(8), cellsW, S(34)), Theme.Crit,
                     TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding |
                     TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.NoPrefix);
                 break;
             default:
                 if (row.Layout.Span is { } span)
-                    DrawSpanCells(g, row, span, y, cw, now);
+                    DrawSpanCells(g, row, span, y, x1, x2, cw, w - NameX - x2, now);
                 else
                 {
-                    DrawQuotaCell(g, row, row.Layout.Short, ShortColumn, CellsX, y, cw, now);
-                    DrawQuotaCell(g, row, row.Layout.Long, LongColumn, CellsX + cw + S(CellGap), y, cw, now);
+                    DrawQuotaCell(g, row, row.Layout.Short, ShortColumn, x1, y, cw, now);
+                    DrawQuotaCell(g, row, row.Layout.Long, LongColumn, x2, y, cw, now);
+                    // an account without a model limit (other provider, API key) leaves the cell empty
+                    if (mw > 0 && row.Layout.Model is { } model)
+                        DrawQuotaCell(g, row, model, _modelScope!, x3, y, mw, now, row.Layout.Long);
                 }
                 break;
         }
 
-        var ey = y + S(RowBase) - S(2);
+        var ey = y + S(RowBase) - S(4);
         if (row.Kind == RowKind.Data)
         {
             foreach (var extra in row.Layout.Extras)
@@ -593,10 +631,6 @@ internal sealed class PopupCanvas : Control
             if (VerdictFor(row, now) is { } verdict)
                 DrawVerdict(g, verdict.text, verdict.color, ey, w);
         }
-
-        if (!last)
-            using (var pen = new Pen(Theme.Divider))
-                g.DrawLine(pen, S(PadX), y + row.H - 1, w - S(PadX), y + row.H - 1);
     }
 
     private void DrawVerdict(Graphics g, string text, Color color, int y, int w)
@@ -608,35 +642,39 @@ internal sealed class PopupCanvas : Control
                 TextFormatFlags.VerticalCenter);
             x += S(18);
         }
-        Gfx.Text(g, text, Theme.FSmall, new Rectangle(x, y + S(2), w - x - S(PadX) - S(6), S(16)), color);
+        Gfx.Text(g, text, Theme.FSmall, new Rectangle(x, y + S(2), w - x - NameX, S(16)), color);
     }
 
     /// <summary>Value left, reset countdown right, bar below. Shows a label only if the window
-    /// differs from what the column header promises.</summary>
+    /// differs from what the column header promises. <paramref name="sameResetAs"/>: the
+    /// countdown is left out when it would repeat that window's (the Fable week resets with
+    /// the general week).</summary>
     private void DrawQuotaCell(Graphics g, RowInfo row, QuotaWindow? win, string column, int x, int y, int cw,
-        DateTimeOffset now)
+        DateTimeOffset now, QuotaWindow? sameResetAs = null)
     {
         if (win is null)
         {
-            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x, y + S(11), cw, S(16)), Theme.Faint);
+            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x, y + S(10), cw, S(16)), Theme.Faint);
             return;
         }
-        row.View.Evals.TryGetValue(win.Key, out var ev);
         // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
-        // lime = unused (0 %) – forecast health no longer drives the bar colour
+        // lime = unused (0 %) – forecast health does not drive the bar colour
         var frac0 = win.UsedFraction ?? 0;
         var color = row.Stale ? Theme.Stale : frac0 >= 0.999 ? Theme.Crit : frac0 > 0 ? Theme.Warn : Theme.Ok;
         var valueColor = row.Stale ? Theme.Stale : color == Theme.Ok ? Theme.Text : color;
 
-        var value = Formatting.Percent(win.UsedFraction);
+        var value = Formatting.PercentShort(win.UsedFraction);
         var vw = Gfx.Measure(g, value, Theme.FValue);
-        Gfx.Text(g, value, Theme.FValue, new Rectangle(x, y + S(9), vw + S(4), S(19)), valueColor);
+        Gfx.Text(g, value, Theme.FValue, new Rectangle(x, y + S(5), vw + S(4), S(22)), valueColor);
 
-        // right: countdown with clock glyph
+        // right: countdown with clock glyph – only what fits next to the value
         var right = x + cw;
+        var room = cw - vw - S(8);
         string countdown;
         if (win.ResetAtUtc is { } reset && reset > now)
-            countdown = Formatting.Span(reset - now);
+            countdown = sameResetAs?.ResetAtUtc is { } other && Math.Abs((other - reset).TotalMinutes) < 5
+                ? ""
+                : Formatting.Span(reset - now);
         else if (win.Remaining is not null && win.Total is not null)
             countdown = $"noch {Formatting.Count(win.Remaining)}/{Formatting.Count(win.Total)}";
         else
@@ -644,18 +682,22 @@ internal sealed class PopupCanvas : Control
         if (countdown.Length > 0)
         {
             var tw = Gfx.Measure(g, countdown, Theme.FTiny);
-            Gfx.Text(g, countdown, Theme.FTiny, new Rectangle(right - tw - S(1), y + S(12), tw + S(2), S(15)), Theme.Muted);
-            right -= tw + S(4);
-            if (win.ResetAtUtc is not null && Theme.IconFamily is not null)
+            if (tw <= room)
             {
+                Gfx.Text(g, countdown, Theme.FTiny, new Rectangle(right - tw - S(1), y + S(12), tw + S(2), S(15)), Theme.Muted);
+                right -= tw + S(4);
+                room -= tw + S(4);
                 var iw = S(13);
-                Gfx.Text(g, Theme.GlyphClock, Theme.FIconSmall, new Rectangle(right - iw, y + S(12), iw, S(15)),
-                    Theme.Faint, TextFormatFlags.VerticalCenter);
-                right -= iw + S(2);
+                if (win.ResetAtUtc is not null && Theme.IconFamily is not null && room >= iw)
+                {
+                    Gfx.Text(g, Theme.GlyphClock, Theme.FIconSmall, new Rectangle(right - iw, y + S(12), iw, S(15)),
+                        Theme.Faint, TextFormatFlags.VerticalCenter);
+                    right -= iw + S(2);
+                }
             }
         }
 
-        // label only when this window is not what the column says (e.g. "Requests", "Sonnet")
+        // label only when this window is not what the column says (e.g. "Requests")
         var label = WindowLayout.ShortLabel(win);
         if (!string.Equals(label, column, StringComparison.OrdinalIgnoreCase))
         {
@@ -664,28 +706,27 @@ internal sealed class PopupCanvas : Control
                 Gfx.Text(g, label, Theme.FTiny, new Rectangle(lx, y + S(12), right - lx - S(4), S(15)), Theme.Faint);
         }
 
-        Gfx.Bar(g, new RectangleF(x, y + S(34), cw, S(5)), win.UsedFraction ?? 0, color, Theme.Track);
+        Gfx.Bar(g, new RectangleF(x, y + S(32), cw, S(6)), win.UsedFraction ?? 0, color, Theme.TrackOnCard);
     }
 
-    /// <summary>Balance/info accounts reuse the two cells: amount | runway.</summary>
-    private void DrawSpanCells(Graphics g, RowInfo row, QuotaWindow span, int y, int cw, DateTimeOffset now)
+    /// <summary>Balance/info accounts use the first two cells: amount | runway. The caption
+    /// follows its value ("23,42 $ Guthaben", "~27 d 3 h Reichweite") – right-aligned it
+    /// collided with wide values in the narrower cells of the three-column layout.</summary>
+    private void DrawSpanCells(Graphics g, RowInfo row, QuotaWindow span, int y, int x1, int x2, int cw, int restWidth,
+        DateTimeOffset now)
     {
         row.View.Evals.TryGetValue(span.Key, out var ev);
-        var x1 = CellsX;
-        var x2 = CellsX + cw + S(CellGap);
         var textColor = row.Stale ? Theme.Stale : Theme.Text;
 
         // cell 1: amount
         var amount = span.Remaining is null ? "–" : Formatting.Money(span.Remaining, span.Unit);
-        Gfx.Text(g, amount, Theme.FValue, new Rectangle(x1, y + S(9), cw, S(19)), textColor);
-        Gfx.Text(g, span.IsInfoOnly ? span.Label : "Guthaben", Theme.FTiny, new Rectangle(x1, y + S(12), cw, S(15)),
-            Theme.Faint, TextFormatFlags.Right);
+        ValueWithCaption(g, amount, textColor, span.IsInfoOnly ? span.Label : "Guthaben", x1, x2 - S(6), y);
         if (!string.IsNullOrEmpty(span.Note))
-            Gfx.Text(g, span.Note, Theme.FTiny, new Rectangle(x1, y + S(30), cw + S(CellGap) + cw, S(15)), Theme.Faint);
+            Gfx.Text(g, span.Note, Theme.FTiny, new Rectangle(x1, y + S(27), x2 + cw - x1, S(15)), Theme.Faint);
 
         if (span.IsInfoOnly)
         {
-            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x2, y + S(11), cw, S(16)), Theme.Faint);
+            Gfx.Text(g, "—", Theme.FSmall, new Rectangle(x2, y + S(10), cw, S(16)), Theme.Faint);
             return;
         }
 
@@ -703,11 +744,22 @@ internal sealed class PopupCanvas : Control
             runway = "—";
             runwayColor = Theme.Faint;
         }
-        Gfx.Text(g, runway, Theme.FValue, new Rectangle(x2, y + S(9), cw, S(19)), runwayColor);
-        Gfx.Text(g, "Reichweite", Theme.FTiny, new Rectangle(x2, y + S(12), cw, S(15)), Theme.Faint, TextFormatFlags.Right);
+        ValueWithCaption(g, runway, runwayColor, "Reichweite", x2, x2 + restWidth, y);
         if (string.IsNullOrEmpty(span.Note))
-            Gfx.Text(g, ev is { HasRate: true } ? "bei aktuellem Verbrauch" : "kein Verbrauch gemessen", Theme.FTiny,
-                new Rectangle(x2, y + S(30), cw, S(15)), Theme.Faint);
+            Gfx.Text(g, ev is { HasRate: true } ? "bei aktuellem Verbrauch" : "kein Verbrauch", Theme.FTiny,
+                new Rectangle(x2, y + S(27), restWidth, S(15)), Theme.Faint);
+    }
+
+    /// <summary>Value in the value font, its caption small and grey right behind it (left out
+    /// when it would pass <paramref name="limitRight"/>).</summary>
+    private static void ValueWithCaption(Graphics g, string value, Color color, string caption, int x, int limitRight, int y)
+    {
+        var vw = Gfx.Measure(g, value, Theme.FValue);
+        Gfx.Text(g, value, Theme.FValue, new Rectangle(x, y + S(5), vw + S(4), S(22)), color);
+        var tw = Gfx.Measure(g, caption, Theme.FTiny);
+        var cx = x + vw + S(7);
+        if (cx + tw <= limitRight)
+            Gfx.Text(g, caption, Theme.FTiny, new Rectangle(cx, y + S(12), tw + S(2), S(15)), Theme.Faint);
     }
 
     /// <summary>Additional window: label under the name column, value across the cells.</summary>
@@ -727,12 +779,10 @@ internal sealed class PopupCanvas : Control
         }
         else
         {
-            row.View.Evals.TryGetValue(win.Key, out var ev);
-            // colour rule (23.10.2026): red = blocked right now (limit reached), amber = in use,
-            // lime = unused (0 %) – forecast health no longer drives the bar colour
+            // same colour rule as the cells
             var frac = win.UsedFraction ?? 0;
             var color = row.Stale ? Theme.Stale : frac >= 0.999 ? Theme.Crit : frac > 0 ? Theme.Warn : Theme.Ok;
-            Gfx.Bar(g, new RectangleF(x, y + S(8), S(70), S(4)), win.UsedFraction ?? 0, color, Theme.Track);
+            Gfx.Bar(g, new RectangleF(x, y + S(7), S(70), S(5)), win.UsedFraction ?? 0, color, Theme.TrackOnCard);
             var text = Formatting.Percent(win.UsedFraction);
             if (win.Remaining is not null && win.Total is not null)
                 text += $" · noch {Formatting.Count(win.Remaining)} von {Formatting.Count(win.Total)}";
@@ -915,7 +965,7 @@ internal sealed class PopupCanvas : Control
         Cursor = zone switch
         {
             Zone.Row or Zone.Refresh or Zone.Settings or Zone.Pin or Zone.SortName or Zone.SortShort or Zone.SortLong
-                => Cursors.Hand,
+                or Zone.SortModel => Cursors.Hand,
             Zone.Header => Cursors.SizeAll,
             _ => Cursors.Default
         };
@@ -961,6 +1011,7 @@ internal sealed class PopupCanvas : Control
             case Zone.SortName: ClickSort(SortColumn.Name); break;
             case Zone.SortShort: ClickSort(SortColumn.Short); break;
             case Zone.SortLong: ClickSort(SortColumn.Long); break;
+            case Zone.SortModel: ClickSort(SortColumn.Model); break;
             case Zone.Row when row == _pressedRow && row >= 0 && row < _rows.Count:
                 RowClicked?.Invoke(_rows[row].View.Config.Id);
                 break;
@@ -986,13 +1037,14 @@ internal sealed class PopupCanvas : Control
     /// <summary>Centre of a column title (render harness).</summary>
     internal Point ColumnTitlePoint(SortColumn column)
     {
-        var w = ClientSize.Width;
+        var (x1, x2, x3, _, _) = Columns(ClientSize.Width);
         var y = S(TitleH) + S(ColumnsH) / 2;
         return column switch
         {
             SortColumn.Name => new Point(NameX + S(20), y),
-            SortColumn.Short => new Point(CellsX + S(20), y),
-            _ => new Point(CellsX + CellWidth(w) + S(CellGap) + S(20), y)
+            SortColumn.Short => new Point(x1 + S(20), y),
+            SortColumn.Model => new Point(x3 + S(20), y),
+            _ => new Point(x2 + S(20), y)
         };
     }
 

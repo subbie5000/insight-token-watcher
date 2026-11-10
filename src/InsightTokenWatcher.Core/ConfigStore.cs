@@ -13,9 +13,26 @@ public sealed class AppSettings
     public int? PopupX { get; set; }
     public int? PopupY { get; set; }
 
-    /// <summary>Popup order chosen via the column titles (None = provider order).</summary>
+    /// <summary>
+    /// Popup order chosen via the column titles (None = provider order). On disk this is never
+    /// "Model": versions before 1.9 reject an unknown name and would treat the whole file as
+    /// corrupt (start without accounts) after a downgrade. The model column is stored as
+    /// <see cref="SortByModel"/>, which older versions simply ignore.
+    /// </summary>
     public SortColumn SortColumn { get; set; }
     public bool SortDescending { get; set; }
+    public bool SortByModel { get; set; }
+
+    /// <summary>The order to apply (includes the model column).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SortColumn EffectiveSort => SortByModel ? SortColumn.Model : SortColumn;
+
+    public void SetSort(SortColumn column, bool descending)
+    {
+        SortByModel = column == SortColumn.Model;
+        SortColumn = SortByModel ? SortColumn.None : column;
+        SortDescending = column != SortColumn.None && descending;
+    }
 }
 
 public sealed class ConfigFile

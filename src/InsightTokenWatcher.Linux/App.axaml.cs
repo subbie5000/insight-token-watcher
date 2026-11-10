@@ -62,12 +62,8 @@ public partial class App : Application
                     s.PopupY = loc.Y;
                 });
             };
-            popup.Canvas.SetSort(engine.Store.Settings.SortColumn, engine.Store.Settings.SortDescending);
-            popup.Canvas.SortChanged += (column, descending) => engine.SaveUiSettings(s =>
-            {
-                s.SortColumn = column;
-                s.SortDescending = descending;
-            });
+            popup.Canvas.SetSort(engine.Store.Settings.EffectiveSort, engine.Store.Settings.SortDescending);
+            popup.Canvas.SortChanged += (column, descending) => engine.SaveUiSettings(s => s.SetSort(column, descending));
             popup.Canvas.RefreshAllClicked += () => engine.ForceRefresh();
             popup.Canvas.RowClicked += id => engine.ForceRefresh(id);
             popup.Canvas.SettingsClicked += () =>

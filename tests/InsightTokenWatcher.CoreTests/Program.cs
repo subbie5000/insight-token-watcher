@@ -822,15 +822,15 @@ Run("sort: a balance running dry within the column horizon ranks as 'runs out'",
         SortView("DeepSeek-27d", balance: true, runwayHours: 27 * 24),
         SortView("Moonshot-unmeasured", balance: true),
         SortView("OpenRouter-16h", balance: true, runwayHours: 16.7),
-        SortView("Claude-50", weekUsed: 0.5),
+        SortView("Quota-50", weekUsed: 0.5),
         SortView("Groq-error", loading: true)
     };
     var asc = Names(AccountSort.Apply(input, SortColumn.Long, false, sortNow));
-    Check(asc == "OpenRouter-16h,Claude-50,DeepSeek-27d,Moonshot-unmeasured,Groq-error", "week asc " + asc);
+    Check(asc == "OpenRouter-16h,Quota-50,DeepSeek-27d,Moonshot-unmeasured,Groq-error", "week asc " + asc);
     var desc = Names(AccountSort.Apply(input, SortColumn.Long, true, sortNow));
-    Check(desc == "DeepSeek-27d,Moonshot-unmeasured,Claude-50,OpenRouter-16h,Groq-error", "week desc " + desc);
+    Check(desc == "DeepSeek-27d,Moonshot-unmeasured,Quota-50,OpenRouter-16h,Groq-error", "week desc " + desc);
     var five = Names(AccountSort.Apply(input, SortColumn.Short, false, sortNow));
-    Check(five == "DeepSeek-27d,Moonshot-unmeasured,OpenRouter-16h,Claude-50,Groq-error", "16 h > 5 h horizon: " + five);
+    Check(five == "DeepSeek-27d,Moonshot-unmeasured,OpenRouter-16h,Quota-50,Groq-error", "16 h > 5 h horizon: " + five);
 });
 
 Run("sort: 5h column uses the short window; a passed reset counts as fresh", () =>
@@ -963,6 +963,306 @@ Run("config store: a UI save keeps an import that landed meanwhile; untouched ke
         ConfigStore.AppDirOverride = null;
         Directory.Delete(dir, true);
     }
+});
+
+// ---------- model-scoped limits (Fable) ----------
+
+// observed verbatim on 2026-11-10: ping with claude-fable-5-2 + Claude Code system prompt
+Dictionary<string, string> FableHeaders(string used) => new()
+{
+    ["anthropic-ratelimit-unified-5h-reset"] = "1794289800",
+    ["anthropic-ratelimit-unified-5h-status"] = "allowed",
+    ["anthropic-ratelimit-unified-5h-utilization"] = "0.02",
+    ["anthropic-ratelimit-unified-7d-reset"] = "1794801600",
+    ["anthropic-ratelimit-unified-7d-status"] = "allowed",
+    ["anthropic-ratelimit-unified-7d-utilization"] = "0.15",
+    ["anthropic-ratelimit-unified-7d_oi-reset"] = "1794801600",
+    ["anthropic-ratelimit-unified-7d_oi-status"] = "allowed",
+    ["anthropic-ratelimit-unified-7d_oi-utilization"] = used,
+    ["anthropic-ratelimit-unified-fallback-percentage"] = "0.5",
+    ["anthropic-ratelimit-unified-overage-disabled-reason"] = "org_level_disabled",
+    ["anthropic-ratelimit-unified-overage-status"] = "rejected",
+    ["anthropic-ratelimit-unified-representative-claim"] = "five_hour",
+    ["anthropic-ratelimit-unified-reset"] = "1794289800",
+    ["anthropic-ratelimit-unified-status"] = "allowed",
+};
+
+// observed verbatim on 2026-11-10 (GET /api/oauth/usage, shortened to the fields in use)
+const string UsageJson = """
+{"five_hour":{"utilization":54.0,"resets_at":"2026-11-10T04:00:00.338536+00:00"},
+ "seven_day":{"utilization":57.0,"resets_at":"2026-11-16T11:00:00.338558+00:00"},
+ "seven_day_opus":null,"seven_day_sonnet":null,"extra_usage":{"is_enabled":false},
+ "limits":[
+  {"kind":"session","group":"session","percent":54,"severity":"normal","resets_at":"2026-11-10T04:00:00.338536+00:00","scope":null,"is_active":false},
+  {"kind":"weekly_all","group":"weekly","percent":57,"severity":"normal","resets_at":"2026-11-16T11:00:00.338558+00:00","scope":null,"is_active":true},
+  {"kind":"weekly_scoped","group":"weekly","percent":14,"severity":"normal","resets_at":"2026-11-16T11:00:00.338721+00:00","scope":{"model":{"id":null,"display_name":"Fable"},"surface":null},"is_active":false}]}
+""";
+
+Run("Anthropic: header 7d_oi is the Fable week (own scope, not a general window)", () =>
+{
+    var s = AnthropicPoller.ParseHeaders(Guid.NewGuid(), FableHeaders("0.14"), 200, "{}");
+    Check(s.Ok && s.Windows.Count == 3, "three windows, got " + s.Windows.Count);
+    Check(string.Join(",", s.Windows.Select(w => w.Key)) == "5h,7d,7d_fable", "order " + string.Join(",", s.Windows.Select(w => w.Key)));
+    var f = s.Windows[2];
+    Check(f.Scope == "Fable" && f.Label == "Fable-Woche", $"scope/label {f.Scope}/{f.Label}");
+    Check(f.WindowMinutes == 10080 && Math.Abs(f.UsedFraction!.Value - 0.14) < 1e-9, "week, 14 %");
+    Check(f.ResetAtUtc!.Value.ToUnixTimeSeconds() == 1794801600, "reset");
+    Check(s.Windows[0].Scope is null && s.Windows[1].Scope is null, "5h/7d are general");
+    Check(AnthropicPoller.Canonical("7d_sonnet") == ("7d_sonnet", "Sonnet"), "sonnet scope");
+    Check(AnthropicPoller.Canonical("5h") == ("5h", null), "plain window");
+});
+
+Run("Anthropic: usage endpoint – only model-scoped limits, named by Anthropic", () =>
+{
+    var list = AnthropicPoller.ParseUsageLimits(UsageJson);
+    Check(list.Count == 1, "one scoped limit, got " + list.Count);
+    var f = list[0];
+    Check(f.Key == "7d_fable" && f.Scope == "Fable" && f.Label == "Fable-Woche", $"{f.Key}/{f.Scope}/{f.Label}");
+    Check(Math.Abs(f.UsedFraction!.Value - 0.14) < 1e-9 && f.WindowMinutes == 10080, "14 % of the week");
+    Check(f.ResetAtUtc == new DateTimeOffset(2026, 11, 16, 11, 0, 0, TimeSpan.Zero), "reset rounded to the second: " + f.ResetAtUtc);
+    var jitter = AnthropicPoller.ParseUsageLimits(UsageJson.Replace("2026-11-16T11:00:00.338721", "2026-11-16T10:59:59.784639"));
+    Check(jitter[0].ResetAtUtc == f.ResetAtUtc, "sub-second jitter before the hour gives the same reset: " + jitter[0].ResetAtUtc);
+    Check(AnthropicPoller.ParseUsageLimits("""{"type":"error","error":{"type":"permission_error"}}""").Count == 0, "error body");
+    Check(AnthropicPoller.ParseUsageLimits("""{"limits":[{"kind":"weekly_scoped","percent":3,"scope":{"model":null,"surface":"x"}}]}""").Count == 0,
+        "scope without a model is skipped");
+});
+
+HttpResponseMessage Reply(int status, string body, Dictionary<string, string>? headers = null)
+{
+    var r = new HttpResponseMessage((System.Net.HttpStatusCode)status) { Content = new StringContent(body) };
+    foreach (var (k, v) in headers ?? new())
+        r.Headers.TryAddWithoutValidation(k, v);
+    return r;
+}
+
+Dictionary<string, string> HaikuHeaders() =>
+    FableHeaders("0").Where(h => !h.Key.Contains("7d_oi")).ToDictionary(h => h.Key, h => h.Value);
+
+Run("Anthropic poll: login token reads the Fable week from the usage endpoint, at most every 5 min", () =>
+{
+    AnthropicPoller.ResetScopedCache();
+    var calls = new List<string>();
+    string? pingBody = null, usageBeta = null, usageAuth = null;
+    using var http = new HttpClient(new FakeHandler((req, _) =>
+    {
+        calls.Add(req.Method + " " + req.RequestUri!.AbsolutePath);
+        if (req.RequestUri.AbsolutePath == "/api/oauth/usage")
+        {
+            usageBeta = string.Join(",", req.Headers.GetValues("anthropic-beta"));
+            usageAuth = req.Headers.Authorization?.Scheme;
+            return Reply(200, UsageJson);
+        }
+        pingBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+        return Reply(200, "{}", HaikuHeaders());
+    }));
+    var cfg = new AccountConfig { Name = "C", Provider = ProviderKind.Anthropic, Auth = AuthKind.Bearer };
+    var poller = new AnthropicPoller();
+    var s = poller.PollAsync(cfg, "tok-1", http, default).GetAwaiter().GetResult();
+    Check(s.Ok && string.Join(",", s.Windows.Select(w => w.Key)) == "5h,7d,7d_fable", "windows " + string.Join(",", s.Windows.Select(w => w.Key)));
+    Check(Math.Abs(s.Windows[2].UsedFraction!.Value - 0.14) < 1e-9, "fable 14 %");
+    Check(string.Join(" | ", calls) == "POST /v1/messages | GET /api/oauth/usage", "calls " + string.Join(" | ", calls));
+    Check(usageAuth == "Bearer" && usageBeta == "oauth-2025-04-20", "usage request shape");
+    Check(pingBody!.Contains("claude-haiku") && pingBody.Contains("\"system\":\"You are Claude Code"), "ping stays Haiku, identifies as Claude Code: " + pingBody);
+
+    var s2 = poller.PollAsync(cfg, "tok-1", http, default).GetAwaiter().GetResult();
+    Check(s2.Windows.Count == 3, "second poll still reports the Fable week");
+    Check(calls.Count == 3 && calls[2] == "POST /v1/messages", "no second usage request within 5 min: " + string.Join(" | ", calls));
+
+    poller.PollAsync(cfg, "tok-2", http, default).GetAwaiter().GetResult();
+    Check(calls.Count == 5 && calls[4] == "GET /api/oauth/usage", "a new token asks again: " + string.Join(" | ", calls));
+});
+
+Run("Anthropic poll: setup token (usage 403) falls back to a ping with the scoped model", () =>
+{
+    AnthropicPoller.ResetScopedCache();
+    var calls = new List<string>();
+    using var http = new HttpClient(new FakeHandler((req, _) =>
+    {
+        if (req.RequestUri!.AbsolutePath == "/api/oauth/usage")
+        {
+            calls.Add("usage");
+            return Reply(403, """{"type":"error","error":{"type":"permission_error","message":"OAuth token does not meet scope requirement user:profile"}}""");
+        }
+        var body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+        var fable = body.Contains("\"model\":\"" + AnthropicPoller.ScopedPingModel + "\"");
+        calls.Add(fable ? "ping-fable" : "ping-haiku");
+        return Reply(200, "{}", fable ? FableHeaders("0.31") : HaikuHeaders());
+    }));
+    var cfg = new AccountConfig { Name = "S", Provider = ProviderKind.Anthropic, Auth = AuthKind.Bearer };
+    var poller = new AnthropicPoller();
+    var s = poller.PollAsync(cfg, "setup-token", http, default).GetAwaiter().GetResult();
+    Check(string.Join(",", calls) == "ping-haiku,usage,ping-fable", "calls " + string.Join(",", calls));
+    var f = s.Windows.Single(w => w.Scope == "Fable");
+    Check(f.Key == "7d_fable" && Math.Abs(f.UsedFraction!.Value - 0.31) < 1e-9, "fable from header 7d_oi");
+    poller.PollAsync(cfg, "setup-token", http, default).GetAwaiter().GetResult();
+    Check(calls.Count == 4 && calls[3] == "ping-haiku", "no extra request on the next poll: " + string.Join(",", calls));
+});
+
+Run("Anthropic poll: API key – no usage request, no Claude Code line; failed extra request keeps the poll", () =>
+{
+    AnthropicPoller.ResetScopedCache();
+    var calls = new List<string>();
+    string? body = null;
+    using var http = new HttpClient(new FakeHandler((req, _) =>
+    {
+        calls.Add(req.RequestUri!.AbsolutePath);
+        if (req.RequestUri.AbsolutePath == "/api/oauth/usage") throw new HttpRequestException("boom");
+        body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+        return Reply(200, "{}", HaikuHeaders());
+    }));
+    var api = new AccountConfig { Name = "K", Provider = ProviderKind.Anthropic, Auth = AuthKind.ApiKeyHeader };
+    var s = new AnthropicPoller().PollAsync(api, "sk-test", http, default).GetAwaiter().GetResult();
+    Check(s.Ok && s.Windows.Count == 2 && calls.Count == 1, "api key: one request, two windows");
+    Check(!body!.Contains("system"), "no system line for API keys: " + body);
+
+    var sub = new AccountConfig { Name = "B", Provider = ProviderKind.Anthropic, Auth = AuthKind.Bearer };
+    var s2 = new AnthropicPoller().PollAsync(sub, "tok", http, default).GetAwaiter().GetResult();
+    Check(s2.Ok && s2.Windows.Count == 2, "usage request failed → poll still ok with 5h/7d");
+});
+
+QuotaWindow FableWin(double used, double resetHours = 48) => new()
+{
+    Key = "7d_fable", Label = "Fable-Woche", Scope = "Fable", WindowMinutes = 10080, UsedFraction = used,
+    ResetAtUtc = DateTimeOffset.UtcNow.AddHours(resetHours)
+};
+
+Run("engine: a full Fable week marks the account amber (FABLE LEER), never critical, no balloon", () =>
+{
+    using var eng = new PollingEngine();
+    var cfg = new AccountConfig { Name = "a", Provider = ProviderKind.Anthropic };
+    eng.Reconfigure(new[] { (cfg, "k") });
+    AccountView? crit = null;
+    eng.CritEntered += (v, _) => crit = v;
+    var snap = OkSnap(cfg.Id, 0.2);
+    snap.Windows.Add(FableWin(1.0));
+    eng.IngestFor(cfg.Id, snap);
+    var v = eng.GetView()[0];
+    Check(v.Health == Health.Warn, "marked, but not critical – other models still run; got " + v.Health);
+    Check(v.Evals["7d_fable"].Health == Health.Crit, "the Fable window itself is at its limit");
+    Check(crit is null, "no balloon for a model limit");
+    Check(WindowLayout.ModelLimitBehind(v) is { } cause && WindowLayout.ModelLimitStatus(cause) == "FABLE LEER", "status names the model limit");
+
+    // week exhausted as well → the general window decides: critical, and it is the reason shown
+    var both = OkSnap(cfg.Id, 1.0);
+    both.Windows.Add(FableWin(1.0));
+    eng.IngestFor(cfg.Id, both);
+    var v2 = eng.GetView()[0];
+    Check(v2.Health == Health.Crit && WindowLayout.ModelLimitBehind(v2) is null, "general limit wins: " + v2.Health);
+
+    // fine again
+    var fine = OkSnap(cfg.Id, 0.0);
+    fine.Windows.Add(FableWin(0.0));
+    eng.IngestFor(cfg.Id, fine);
+    Check(eng.GetView()[0].Health == Health.Ok && WindowLayout.ModelLimitBehind(eng.GetView()[0]) is null, "unused → OK");
+});
+
+Run("layout: the Fable week gets the model column, other scopes stay extras", () =>
+{
+    var five = new QuotaWindow { Key = "5h", WindowMinutes = 300, UsedFraction = 0.1 };
+    var week = new QuotaWindow { Key = "7d", WindowMinutes = 10080, UsedFraction = 0.2 };
+    var sonnet = new QuotaWindow { Key = "7d_sonnet", Scope = "Sonnet", WindowMinutes = 10080, UsedFraction = 0.3 };
+    var fable = FableWin(0.4);
+    var l = WindowLayout.Classify(new List<QuotaWindow> { fable, five, sonnet, week }, "fable");
+    Check(l.Short == five && l.Long == week, "general windows keep their columns even when listed later");
+    Check(l.Model == fable, "model column");
+    Check(l.Extras.Count == 1 && l.Extras[0] == sonnet, "other scope → extra");
+    var none = WindowLayout.Classify(new List<QuotaWindow> { fable, week });
+    Check(none.Model is null && none.Long == week && none.Extras.Single() == fable, "without a model column it is an extra");
+    Check(WindowLayout.ShortLabel(fable) == "Fable", "label names the model, not 'Woche'");
+
+    AccountView V(params QuotaWindow[] ws) => new()
+    {
+        Config = new AccountConfig { Name = "x", Provider = ProviderKind.Anthropic },
+        Snapshot = new AccountSnapshot { Ok = true, Windows = ws.ToList() }
+    };
+    Check(WindowLayout.ColumnScope(new[] { V(week, fable), V(week, FableWin(0)), V(week, sonnet) }) == "Fable", "most frequent scope");
+    Check(WindowLayout.ColumnScope(new[] { V(week), V(five) }) is null, "no scoped limit → no column");
+});
+
+Run("sort: model column – runs out first by the Fable week; accounts without it last", () =>
+{
+    AccountView F(string name, double? fable, double week = 0.5)
+    {
+        var cfg = new AccountConfig { Name = name, Provider = ProviderKind.Anthropic };
+        var snap = new AccountSnapshot { AccountId = cfg.Id, Ok = true, AtUtc = sortNow };
+        snap.Windows.Add(new QuotaWindow { Key = "7d", WindowMinutes = 10080, UsedFraction = week, ResetAtUtc = sortNow.AddHours(48) });
+        if (fable is { } f) snap.Windows.Add(FableWin(f));
+        return new AccountView { Config = cfg, Snapshot = snap, LastGood = snap };
+    }
+    var input = new List<AccountView>
+    {
+        F("no-fable-week-90", null, 0.9), F("fable-14", 0.14), SortView("balance", balance: true, runwayHours: 2),
+        F("fable-full", 1.0), F("fable-0", 0.0)
+    };
+    var asc = Names(AccountSort.Apply(input, SortColumn.Model, false, sortNow));
+    Check(asc == "fable-full,fable-14,fable-0,no-fable-week-90,balance", "asc " + asc);
+    var desc = Names(AccountSort.Apply(input, SortColumn.Model, true, sortNow));
+    Check(desc == "fable-0,fable-14,fable-full,no-fable-week-90,balance", "desc " + desc);
+    Check(AccountSort.Next(SortColumn.Long, false, SortColumn.Model) == (SortColumn.Model, false), "click cycle knows the column");
+});
+
+Run("row texts: quiet second line names the provider – or what the account holds", () =>
+{
+    var quota = new RowLayout();
+    var balance = new RowLayout { Span = new QuotaWindow { IsBalance = true } };
+    string Sub(string name, ProviderKind k, RowLayout l) => WindowLayout.Subline(new AccountConfig { Name = name, Provider = k }, l);
+    Check(Sub("Abo 3", ProviderKind.Anthropic, quota) == "Anthropic", "provider");
+    Check(Sub("Kimi Code", ProviderKind.KimiCode, quota) == "Kontingent", "no 'Kimi Code / Kimi Code (Abo)': " + Sub("Kimi Code", ProviderKind.KimiCode, quota));
+    Check(Sub("deepseek", ProviderKind.DeepSeek, balance) == "Guthaben", "balance account");
+    Check(Sub("GLM Coding Plan", ProviderKind.Zai, quota) == "GLM (z.ai / BigModel)", "different → provider");
+
+});
+
+Run("config: sorting by the model column is stored so that older versions can still read the file", () =>
+{
+    var dir = Path.Combine(Path.GetTempPath(), "itw-test-" + Guid.NewGuid().ToString("N")[..8]);
+    ConfigStore.AppDirOverride = dir;
+    try
+    {
+        var store = new ConfigStore();
+        store.UpdateSettings(s => s.SetSort(SortColumn.Model, true));
+        var text = File.ReadAllText(Path.Combine(dir, "config.json"));
+        Check(!text.Contains("\"Model\""), "no enum name an older version would reject: " + text);
+        Check(text.Contains("\"SortColumn\": \"None\"") && text.Contains("\"SortByModel\": true"), "stored as flag: " + text);
+        var back = new ConfigStore().Settings;
+        Check(back.EffectiveSort == SortColumn.Model && back.SortDescending, "restored: " + back.EffectiveSort);
+
+        store.UpdateSettings(s => s.SetSort(SortColumn.Long, false));
+        back = new ConfigStore().Settings;
+        Check(back.EffectiveSort == SortColumn.Long && !back.SortByModel && !back.SortDescending, "another column clears the flag");
+        store.UpdateSettings(s => s.SetSort(SortColumn.None, true));
+        Check(!new ConfigStore().Settings.SortDescending, "default order has no direction");
+    }
+    finally
+    {
+        ConfigStore.AppDirOverride = null;
+        Directory.Delete(dir, true);
+    }
+});
+
+Run("tray ring: mean of the general weeks – Fable weeks do not dilute it", () =>
+{
+    AccountView A(double week, double? fable)
+    {
+        var snap = new AccountSnapshot { Ok = true };
+        snap.Windows.Add(new QuotaWindow { Key = "5h", WindowMinutes = 300, UsedFraction = 0.9 });
+        snap.Windows.Add(new QuotaWindow { Key = "7d", WindowMinutes = 10080, UsedFraction = week });
+        if (fable is { } f) snap.Windows.Add(FableWin(f));
+        return new AccountView { Config = new AccountConfig { Name = "c", Provider = ProviderKind.Anthropic }, Snapshot = snap };
+    }
+    var ring = TrayGauge.WeekFraction(new[] { A(0.6, 0.0), A(0.2, 0.0) });
+    Check(ring is { } r && Math.Abs(r - 0.4) < 1e-9, "0.4 expected, got " + ring);
+    Check(TrayGauge.WeekFraction(Array.Empty<AccountView>()) is null, "no data → null");
+});
+
+Run("percent for cells: whole numbers, never rounded onto 0 % or 100 %", () =>
+{
+    Check(Formatting.PercentShort(0) == "0 %", "0");
+    Check(Formatting.PercentShort(0.003) == "<1 %", "0.3 %");
+    Check(Formatting.PercentShort(0.585) == "59 %" || Formatting.PercentShort(0.585) == "58 %", "58.5 → whole: " + Formatting.PercentShort(0.585));
+    Check(Formatting.PercentShort(0.996) == "99 %", "99.6 stays below 100: " + Formatting.PercentShort(0.996));
+    Check(Formatting.PercentShort(1.0) == "100 %", "100");
+    Check(Formatting.PercentShort(null) == "–", "null");
 });
 
 Console.WriteLine();

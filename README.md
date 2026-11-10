@@ -11,7 +11,7 @@ Supported providers:
 
 | Provider | Data source | Windows shown |
 |---|---|---|
-| Anthropic (API key or OAuth / setup token) | Rate-limit headers on a minimal `POST /v1/messages` (`max_tokens=1`, Haiku) | 5-hour, 7-day, possibly Sonnet/Opus week |
+| Anthropic (API key or OAuth / setup token) | Rate-limit headers on a minimal `POST /v1/messages` (`max_tokens=1`, Haiku); model-scoped limits from `GET /api/oauth/usage` | 5-hour, 7-day, model weeks (Fable, …) |
 | Kimi Code (subscription) | `GET api.kimi.com/coding/v1/usages` | Weekly quota + 5-hour window |
 | Moonshot / Kimi balance (prepaid) | `GET api.moonshot.ai/v1/users/me/balance` | Balance (no reset) |
 | GLM (z.ai / BigModel) | `GET {base}/api/monitor/usage/quota/limit` | Token/credit quotas with reset |
@@ -79,16 +79,20 @@ crit notifications use `notify-send` when available.
 - **Hover the tray icon** → popup with all accounts; **left-click** pins it open.
 - **Drag the popup by its title band** to park it anywhere, on any monitor. The position
   is remembered across restarts.
-- One row per account: the **short window** (e.g. 5 h) in the left column, the
-  **long window** (week) in the right, each with bar, percentage and reset countdown —
+- One card per account: the **short window** (e.g. 5 h) in the first column, the
+  **long window** (week) in the second, each with bar, percentage and reset countdown —
   so the same kind of window lines up across all accounts. Balance accounts show the
   remaining credit and how long it lasts.
-- A forecast line appears only when an account is **tight** or **critical**
-  ("Woche: Leer in … – Reset erst in …!").
+- **Model limits (Fable):** Claude subscriptions have a separate weekly limit for the
+  Fable model. As soon as an account reports one, a third column **FABLE** appears (the
+  popup gets wider). A used-up Fable week marks the account amber with the status
+  "FABLE LEER" — never as critical, because every other model still runs on it.
+- A healthy account stays quiet (its second line names the provider). Only exceptions
+  get a coloured status word and a forecast line ("Woche: leer in … – Reset erst in …!").
 - **Hover a row** for details (all windows, exact reset times, forecasts); **click a
   row** to re-poll that account immediately.
-- **Click a column title** to sort: KONTO by name, 5 STUNDEN / WOCHE by *which account
-  runs out first* (blocked and soon-empty accounts on top, then the fullest). Clicking
+- **Click a column title** to sort: KONTO by name, 5 STUNDEN / WOCHE / FABLE by *which
+  account runs out first* (blocked and soon-empty accounts on top, then the fullest). Clicking
   again reverses the order ("zuletzt leer"), a third click restores the default; the
   choice is remembered.
 - **Cell colors** follow usage: lime = unused, amber = in use, red = limit reached,
@@ -119,6 +123,12 @@ Balance accounts without reset: OK > 2 days, tight > 12 h, critical below.
 Anthropic is polled via a minimal request (1 output token, Haiku): ≈ $0.00002 per
 poll, i.e. ~2–3 ct/month per account at the 60 s default. All other providers use
 free status endpoints.
+
+The model limits of a Claude subscription (Fable) are read every 5 minutes from the
+subscription's own usage endpoint, which spends no tokens. Setup tokens
+(`claude setup-token`) are not allowed to read it; for those the app sends one
+1-token request with the Fable model every 15 minutes instead — the only request that
+touches the Fable limit it measures.
 
 ## Headless import & CLI
 

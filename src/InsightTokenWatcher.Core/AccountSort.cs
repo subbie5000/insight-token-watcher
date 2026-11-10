@@ -11,7 +11,10 @@ public enum SortColumn
     Short,
 
     /// <summary>Long window (&gt; 1 day, e.g. the week).</summary>
-    Long
+    Long,
+
+    /// <summary>Model-scoped week (e.g. Fable).</summary>
+    Model
 }
 
 /// <summary>
@@ -49,8 +52,10 @@ public static class AccountSort
                     : list.OrderBy(v => v.Config.Name, NaturalOrder).ToList();
             case SortColumn.Short:
             case SortColumn.Long:
+            case SortColumn.Model:
+                var scope = WindowLayout.ColumnScope(list);
                 return list
-                    .Select(v => (view: v, key: EmptyKey(v, column, now)))
+                    .Select(v => (view: v, key: EmptyKey(v, column, now, scope)))
                     .OrderBy(x => x.key.Group == 2 ? 2 : descending ? 1 - x.key.Group : x.key.Group)
                     .ThenBy(x => descending ? -x.key.Value : x.key.Value)
                     .ThenBy(x => x.view.IsStale ? 1 : 0) // on a tie, confirmed values before old ones
@@ -68,14 +73,21 @@ public static class AccountSort
     /// Group 2 = no data for this column.
     /// Uses the values the popup shows (the last good snapshot); stale values get no projection.
     /// </summary>
-    internal static (int Group, double Value) EmptyKey(AccountView v, SortColumn column, DateTimeOffset now)
+    internal static (int Group, double Value) EmptyKey(AccountView v, SortColumn column, DateTimeOffset now,
+        string? columnScope = null)
     {
         if (v.Display is not { } snap) return (2, 0);
-        var layout = WindowLayout.Classify(snap.Windows);
-        var w = column == SortColumn.Short ? layout.Short : layout.Long;
+        var layout = WindowLayout.Classify(snap.Windows, columnScope);
+        var w = column switch
+        {
+            SortColumn.Short => layout.Short,
+            SortColumn.Model => layout.Model,
+            _ => layout.Long
+        };
         if (w is null || w.UsedFraction is not { } used)
         {
-            if (layout.Span is not { IsBalance: true } balance) return (2, 0);
+            // a balance says nothing about a model limit
+            if (column == SortColumn.Model || layout.Span is not { IsBalance: true } balance) return (2, 0);
             if (!v.IsStale && v.Evals.TryGetValue(balance.Key, out var bev) &&
                 bev is { HasRate: true, TimeToEmpty: { } runway })
             {

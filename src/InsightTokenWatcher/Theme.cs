@@ -15,7 +15,7 @@ internal static class Theme
     public static readonly Color Muted = Color.FromArgb(162, 168, 180);  // ≈ 7.5:1 on Bg
     public static readonly Color Faint = Color.FromArgb(128, 134, 146);  // ≈ 5:1 on Bg (WCAG AA for small text)
     public static readonly Color Stale = Color.FromArgb(104, 110, 122);
-    public static readonly Color Track = Color.FromArgb(40, 44, 53);
+    public static readonly Color TrackOnCard = Color.FromArgb(58, 63, 75);   // bar track on a row card
     public static readonly Color HoverBorder = Color.FromArgb(88, 94, 110);
     public static readonly Color ButtonHover = Color.FromArgb(38, 42, 51);
 
@@ -51,19 +51,6 @@ internal static class Theme
         ProviderKind.OpenRouter => Color.FromArgb(230, 126, 80),  // coral
         ProviderKind.GenericOpenAi => Color.FromArgb(150, 150, 160),
         _ => Muted
-    };
-
-    public static string ProviderShort(ProviderKind k) => k switch
-    {
-        ProviderKind.Anthropic => "Anthropic",
-        ProviderKind.KimiCode => "Kimi Code",
-        ProviderKind.Moonshot => "Moonshot",
-        ProviderKind.Zai => "GLM",
-        ProviderKind.DeepSeek => "DeepSeek",
-        ProviderKind.OpenAi => "OpenAI",
-        ProviderKind.OpenRouter => "OpenRouter",
-        ProviderKind.GenericOpenAi => "OpenAI-kompatibel",
-        _ => k.ToString()
     };
 
     // ---- DPI ----
@@ -103,12 +90,12 @@ internal static class Theme
     }
 
     public static Font FTitle => Px(16, true);
-    public static Font FName => Px(13.5f, true);
+    public static Font FName => Px(13f, true);
     public static Font FBody => Px(12.5f);
     public static Font FSmall => Px(11.5f);
     public static Font FTiny => Px(11f);
     public static Font FCaps => Px(10.5f, true);
-    public static Font FValue => Px(13.5f, true);
+    public static Font FValue => Px(15f, true);
     public static Font FBig => Px(17f, true);
 
     private static string? _iconFamily;

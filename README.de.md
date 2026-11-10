@@ -8,7 +8,7 @@ Reset pro Konto – so siehst du sofort, ob dein Kontingent bis zum Reset reicht
 
 | Anbieter | Datenquelle | Fenster |
 |---|---|---|
-| Anthropic (API-Key oder OAuth/Setup-Token) | Rate-Limit-Header auf einem Mini-Call (`max_tokens=1`, Haiku) | 5-Std-, 7-Tage-, ggf. Sonnet-/Opus-Woche |
+| Anthropic (API-Key oder OAuth/Setup-Token) | Rate-Limit-Header auf einem Mini-Call (`max_tokens=1`, Haiku); Modell-Limits aus `GET /api/oauth/usage` | 5-Std-, 7-Tage-Fenster, Modell-Wochen (Fable, …) |
 | Kimi Code (Abo) | `GET api.kimi.com/coding/v1/usages` | Wochenkontingent + 5-Std-Fenster |
 | Moonshot / Kimi Guthaben (Prepaid) | `GET api.moonshot.ai/v1/users/me/balance` | Guthaben (kein Reset) |
 | GLM / z.ai / BigModel | `GET {base}/api/monitor/usage/quota/limit` | Token-/Credit-Kontingente mit Reset |
@@ -73,7 +73,11 @@ kommen über `notify-send`, sofern installiert.
 - **Popup am Titel ziehen** → an beliebiger Stelle auf beliebigem Monitor parken
   (heftet automatisch an; Position bleibt über Neustarts erhalten).
 - **Klick auf ein Konto** im Popup → sofortige Neumessung.
-- **Klick auf einen Spaltenkopf** sortiert: KONTO nach Name, 5 STUNDEN / WOCHE danach,
+- **Fable-Limit:** Claude-Abos haben für das Fable-Modell ein eigenes Wochenlimit. Sobald
+  ein Konto eins meldet, erscheint eine dritte Spalte **FABLE** (das Popup wird breiter).
+  Ist die Fable-Woche aufgebraucht, wird das Konto amber markiert und trägt den Status
+  „FABLE LEER“ – nie „KRITISCH“, weil alle anderen Modelle dort weiterlaufen.
+- **Klick auf einen Spaltenkopf** sortiert: KONTO nach Name, 5 STUNDEN / WOCHE / FABLE danach,
   *welches Konto zuerst leer ist* (gesperrte und bald leere oben, dann die vollsten).
   Zweiter Klick dreht die Reihenfolge um („zuletzt leer“), dritter Klick stellt den
   Standard wieder her; die Wahl bleibt gespeichert.
@@ -82,10 +86,12 @@ kommen über `notify-send`, sofern installiert.
   Zeilenhintergrund (amber bei knapp, kritisch oder Fehler).
 - **Tray-Icon**: Ring mit der mittleren Wochenauslastung deiner Anthropic-Konten, Prozent
   in der Mitte; ein Eckpunkt markiert Konten mit Problemen.
-- Pro Fenster: Balken + „verbraucht X %“, Prognosezeile
-  („Noch 3 h 41 min · Reset in 2 h 14 min – reicht bis zum Reset“ bzw.
-  „Leer in … – Reset erst in …!“) und ein 60-Minuten-Verlauf.
-- Guthaben-Konten (DeepSeek/Moonshot): Restbetrag + „reicht noch N Tage“.
+- Pro Konto eine Karte, pro Fenster Prozentwert, Reset-Countdown und Balken. Ein
+  unauffälliges Konto bleibt ruhig (zweite Zeile nennt den Anbieter); nur Ausnahmen
+  bekommen ein farbiges Statuswort und eine Prognosezeile
+  („Woche: leer in … – Reset erst in …!“).
+- **Mouse-over auf ein Konto** zeigt alle Fenster mit genauer Reset-Zeit.
+- Guthaben-Konten (DeepSeek/Moonshot): Restbetrag + Reichweite bei aktuellem Verbrauch.
 - Balloon-Warnung, sobald ein Konto kritisch wird (abschaltbar).
 
 ## Wie die Prognose funktioniert
@@ -106,6 +112,11 @@ zurück. Guthaben ohne Reset: OK > 2 Tage, KNAPP > 12 h, KRITISCH darunter.
 Anthropic wird über einen Mini-Request (1 Output-Token, Haiku) abgefragt:
 ≈ 0,00002 $ pro Abfrage, also ~2–3 Cent/Monat je Konto bei 60-s-Intervall.
 Die anderen Anbieter lesen reine Status-Endpunkte (kostenlos).
+
+Das Fable-Limit eines Claude-Abos wird alle 5 Minuten aus dem Usage-Endpunkt des Abos
+gelesen – das kostet keine Tokens. Setup-Tokens (`claude setup-token`) dürfen ihn nicht
+lesen; für sie sendet die App stattdessen alle 15 Minuten eine 1-Token-Anfrage mit dem
+Fable-Modell – die einzige Anfrage, die das gemessene Fable-Limit selbst berührt.
 
 ## Build aus dem Quellcode
 
