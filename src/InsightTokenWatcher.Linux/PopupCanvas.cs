@@ -39,6 +39,9 @@ internal sealed class PopupCanvas : Control
 
     /// <summary>Title, summary and – with pace ticks – the legend; the column titles follow.</summary>
     private double TitleBandH => TitleH + (_hasPace ? LegendH : 0);
+
+    /// <summary>Height of the band the popup is dragged by (DIP).</summary>
+    public double TitleBandHeight => TitleBandH;
     private double HeaderH => TitleBandH + ColumnsH;
     private int _contentH = 84;
     private double _scroll;

@@ -1240,6 +1240,67 @@ Run("config: sorting by the model column is stored so that older versions can st
     }
 });
 
+Run("parked popup stays on the monitor it was dropped on", () =>
+{
+    // two rows of monitors, the lower row enumerated first (as Windows reported it on the
+    // machine of the bug report); 48 px taskbar; the upper row is shifted 12 px to the right
+    static (System.Drawing.Rectangle, System.Drawing.Rectangle) Screen(int x, int y) =>
+        (new System.Drawing.Rectangle(x, y, 1920, 1080), new System.Drawing.Rectangle(x, y, 1920, 1032));
+    var screens = new[] { Screen(-1920, 0), Screen(0, 0), Screen(12, -1080), Screen(-3840, 0), Screen(-1908, -1080), Screen(-3828, -1080) };
+    const int width = 560, desired = 907, title = 77; // 13 accounts: taller than the 85 % cap (877)
+    System.Drawing.Rectangle Park(int x, int y) =>
+        PopupPlacement.Parked(new System.Drawing.Point(x, y), width, desired, title, screens)!.Value;
+
+    // dropped on the upper monitor above the primary, not at its very top: the full desired height
+    // would reach into the primary below – the popup must still stay on the upper monitor
+    var up = Park(600, -800);
+    Check(up.Y < 0 && up.Bottom <= -48, $"dropped on the monitor above the primary → stays there, got {up}");
+    Check(up.X == 600 && up.Height == 877, $"x kept, height capped: {up}");
+    Check(up.Y == -925, $"shifted up just enough to fit above the taskbar: {up}");
+
+    // upper-left monitor, lower-left monitor is enumerated earlier
+    var upLeft = Park(-2513, -600);
+    Check(upLeft.Y < 0 && upLeft.X == -2513, $"upper-left monitor → stays there, got {upLeft}");
+
+    // a spot that already fits is not touched (no jump on the next data refresh)
+    Check(Park(-2513, -1025) == new System.Drawing.Rectangle(-2513, -1025, width, 877), "fitting spot unchanged: " + Park(-2513, -1025));
+    Check(Park(600, 100) == new System.Drawing.Rectangle(600, 100, width, 877), "primary, fitting spot unchanged");
+
+    // title band across two monitors: the one showing more of it wins, then it is pulled fully onto it
+    var across = Park(-200, 20); // 200 px on the left monitor, 360 px on the primary
+    Check(across.X == 0 && across.Y == 20, $"more of the title on the primary → primary: {across}");
+
+    // the result is stable: parking the result again gives the same bounds
+    Check(Park(up.X, up.Y) == up, "stable after the first placement");
+
+    // monitor gone → null (caller falls back to the tray anchor)
+    Check(PopupPlacement.Parked(new System.Drawing.Point(9000, 9000), width, desired, title, screens) is null, "off all screens");
+
+    // The full monitor wall of the report (11 screens in two rows, enumeration order as reported
+    // by Windows, rows offset against each other, one taller taskbar): wherever the popup is
+    // dropped, it ends up completely inside the working area of THAT monitor.
+    static (System.Drawing.Rectangle, System.Drawing.Rectangle) Wall(int x, int y, int workHeight = 1032) =>
+        (new System.Drawing.Rectangle(x, y, 1920, 1080), new System.Drawing.Rectangle(x, y, 1920, workHeight));
+    var wall = new[]
+    {
+        Wall(-1920, 0), Wall(0, 0), Wall(5772, -1086, 1008), Wall(12, -1080), Wall(-3840, 0), Wall(-1908, -1080),
+        Wall(-3828, -1080), Wall(1920, 0), Wall(3852, -1084), Wall(1932, -1084), Wall(3840, 0)
+    };
+    var drops = 0;
+    foreach (var (bounds, work) in wall)
+        foreach (var fx in new[] { 0.0, 0.3, 0.6 })       // the title band lies completely on this monitor
+            foreach (var fy in new[] { 0.0, 0.1, 0.35, 0.6, 0.9 })
+            {
+                var at = new System.Drawing.Point(bounds.X + (int)(fx * 1920), bounds.Y + (int)(fy * 1000));
+                var placed = PopupPlacement.Parked(at, width, desired, title, wall)!.Value;
+                Check(work.Contains(placed), $"dropped at {at} on {bounds} → {placed} is not inside {work}");
+                Check(placed.X == at.X, $"x untouched for a drop at {at}: {placed}");
+                Check(PopupPlacement.Parked(placed.Location, width, desired, title, wall) == placed, $"stable at {placed}");
+                drops++;
+            }
+    Check(drops == 165, "all drop points checked: " + drops);
+});
+
 Run("pace tick: share of the window's time that has passed", () =>
 {
     var now = DateTimeOffset.UtcNow;

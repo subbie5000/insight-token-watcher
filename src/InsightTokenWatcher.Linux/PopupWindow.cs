@@ -66,6 +66,16 @@ internal sealed class PopupWindow : Window
         Activate();
     }
 
+    /// <summary>The user dropped the popup: pull it fully onto that screen now (not at the next data
+    /// refresh) and remember where it really sits.</summary>
+    public PixelPoint Park(PixelPoint dropped)
+    {
+        PreferredLocation = dropped;
+        ApplyBounds();
+        PreferredLocation = Position;
+        return Position;
+    }
+
     public void HidePopup()
     {
         _repaint.Stop();
@@ -82,7 +92,23 @@ internal sealed class PopupWindow : Window
         // Avalonia: Width/Height are DIPs, screen rects and Position are physical pixels. The old
         // code mixed both, so on a HiDPI screen the popup hung off the right edge; it also kept a
         // parked spot even after the popup had grown past the screen bottom.
-        var parked = PreferredLocation is { } p ? Screens.All.FirstOrDefault(s => s.Bounds.Contains(p)) : null;
+        // the screen that shows most of the title band (the part the user dropped) – the top-left
+        // corner alone may lie just outside every screen while the popup is clearly on one
+        Screen? parked = null;
+        if (PreferredLocation is { } p)
+        {
+            long best = 0;
+            foreach (var s in Screens.All)
+            {
+                var band = new PixelRect(p.X, p.Y, (int)Math.Ceiling(Width * s.Scaling),
+                    (int)Math.Ceiling(Canvas.TitleBandHeight * s.Scaling));
+                var shown = s.Bounds.Intersect(band);
+                var area = (long)shown.Width * shown.Height;
+                if (area <= best) continue;
+                best = area;
+                parked = s;
+            }
+        }
         var screen = parked ?? Screens.Primary ?? Screens.All.FirstOrDefault();
         var wa = screen?.WorkingArea ?? new PixelRect(0, 0, 1920, 1040);
         var scale = screen?.Scaling is > 0 and var sc ? sc : 1.0;

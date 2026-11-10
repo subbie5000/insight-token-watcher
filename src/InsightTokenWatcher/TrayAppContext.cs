@@ -43,11 +43,11 @@ internal sealed class TrayAppContext : ApplicationContext
         };
         _popup.Canvas.PopupMoved += loc =>
         {
-            _popup.PreferredLocation = loc;
+            var placed = _popup.Park(loc);
             SaveUiSettings(s =>
             {
-                s.PopupX = loc.X;
-                s.PopupY = loc.Y;
+                s.PopupX = placed.X;
+                s.PopupY = placed.Y;
             });
         };
         if (_store.Settings.PopupX is { } px && _store.Settings.PopupY is { } py)

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.10.1] - 2026-11-10
+
+### Fixed
+- **A parked popup jumped to another monitor a few seconds after it was dropped** (since
+  1.8.0). The monitor was chosen by the popup's full desired height: a tall popup dropped on a
+  monitor above another one reaches into the lower monitor on paper, the first match in the
+  system's enumeration order won, and the next data refresh pulled the popup down there. The
+  monitor is now the one that shows most of the title band – the part that was dropped.
+- A popup dropped so that it would hang out of the screen is pulled in at the moment of the
+  drop instead of at the next data refresh; the position that is remembered is where it
+  really sits. Windows and Linux.
+- Linux: a parked popup whose top-left corner lay just outside every screen fell back to the
+  default corner.
+
 ## [1.10.0] - 2026-11-10
 
 ### Added

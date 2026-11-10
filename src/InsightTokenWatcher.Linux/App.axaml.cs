@@ -55,11 +55,11 @@ public partial class App : Application
             };
             popup.Canvas.PopupMoved += loc =>
             {
-                popup.PreferredLocation = loc;
+                var placed = popup.Park(loc);
                 engine.SaveUiSettings(s =>
                 {
-                    s.PopupX = loc.X;
-                    s.PopupY = loc.Y;
+                    s.PopupX = placed.X;
+                    s.PopupY = placed.Y;
                 });
             };
             popup.Canvas.SetSort(engine.Store.Settings.EffectiveSort, engine.Store.Settings.SortDescending);

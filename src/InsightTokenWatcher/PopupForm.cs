@@ -124,6 +124,19 @@ internal sealed class PopupForm : Form
     public void KeepAlive() => _lastInsideUtc = DateTime.UtcNow;
 
     /// <summary>
+    /// The user dropped the popup at <paramref name="dropped"/>. If it hangs out of the screen
+    /// there, it is pulled in NOW, while the user is looking at it – not at the next data
+    /// refresh seconds later. Returns where it really sits; that is what gets remembered.
+    /// </summary>
+    public Point Park(Point dropped)
+    {
+        PreferredLocation = dropped;
+        ApplyBounds();
+        PreferredLocation = Location;
+        return Location;
+    }
+
+    /// <summary>
     /// Glass opacity follows the brightness behind the popup. Hidden popup: measured on its
     /// future area. Visible popup: on a ring just outside it (its own pixels must not count).
     /// </summary>
@@ -157,21 +170,14 @@ internal sealed class PopupForm : Form
         if (Canvas.IsDragging) return; // don't yank the form mid-drag
         var w = Theme.S(Canvas.LogicalWidth);
 
-        // parked by the user via drag: keep that spot unless the monitor is gone
+        // parked by the user via drag: keep that spot (on the monitor it was dropped on) unless
+        // the monitor is gone
         if (PreferredLocation is { } p)
         {
-            var h0 = Canvas.DesiredHeight;
-            var target = new Rectangle(p.X, p.Y, w, h0);
-            var screen0 = Screen.AllScreens.FirstOrDefault(s => s.Bounds.IntersectsWith(target));
-            if (screen0 is not null)
+            var screens = Screen.AllScreens.Select(s => (s.Bounds, s.WorkingArea)).ToList();
+            if (PopupPlacement.Parked(p, w, Canvas.DesiredHeight, Canvas.TitleBandHeight, screens) is { } parked)
             {
-                var wa0 = screen0.WorkingArea;
-                var hPark = Math.Min(h0, (int)(wa0.Height * 0.85));
-                // the popup may have grown since it was parked (more accounts, warning lines):
-                // shift it back onto the screen instead of cutting off the footer and last rows
-                var x0 = Math.Clamp(p.X, wa0.Left, Math.Max(wa0.Left, wa0.Right - w));
-                var y0 = Math.Clamp(p.Y, wa0.Top, Math.Max(wa0.Top, wa0.Bottom - hPark));
-                SetBounds(x0, y0, w, hPark);
+                SetBounds(parked.X, parked.Y, parked.Width, parked.Height);
                 return;
             }
         }
