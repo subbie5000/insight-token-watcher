@@ -297,7 +297,8 @@ internal sealed class TrayAppContext : ApplicationContext
                     stale = v.IsStale,
                     failure = v.Failure.ToString(),
                     lastGood = v.LastGood?.AtUtc.ToLocalTime(),
-                    windows = v.Display?.Windows.Count ?? 0
+                    windows = v.Display?.Windows.Count ?? 0,
+                    values = v.StatusValues()
                 })
             };
             var json = System.Text.Json.JsonSerializer.Serialize(status,

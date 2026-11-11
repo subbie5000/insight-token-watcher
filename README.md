@@ -151,6 +151,11 @@ subscription's own usage endpoint, which spends no tokens. Setup tokens
 1-token request with the Fable model every 15 minutes instead — the only request that
 touches the Fable limit it measures.
 
+In between, the last Fable value is shown again; the tooltip says when it was read once it
+is older than the rest ("Wert von 11:29"). Two things make the app read it at once: a
+general window that was reset (by time, or by hand in claude.ai) and a click on the row or
+the refresh button — at most every 30 seconds.
+
 ## Headless import & CLI
 
 `InsightTokenWatcher.exe --import accounts.json` imports accounts without starting the GUI

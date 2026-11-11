@@ -5,6 +5,10 @@ namespace InsightTokenWatcher.Core;
 public interface IAccountPoller
 {
     Task<AccountSnapshot> PollAsync(AccountConfig cfg, string plainKey, HttpClient http, CancellationToken ct);
+
+    /// <summary>The user asked for fresh values: a poller that reuses some of its values for a
+    /// while reads them again with the next poll.</summary>
+    void Invalidate(Guid accountId) { }
 }
 
 public static class ProviderInfo

@@ -852,6 +852,9 @@ internal sealed class PopupCanvas : Control
                         .Append(" (in ").Append(Formatting.Span(r - now)).Append(')');
                 if (WindowLayout.ElapsedFraction(w, now) is { } elapsed)
                     sb.Append($" · Fenster zu {elapsed * 100:0} % um");
+                // a model limit is read less often than the rest: say so when it is older
+                if (w.MeasuredAtUtc is { } read && snap.AtUtc - read > TimeSpan.FromSeconds(90))
+                    sb.Append($" · Wert von {read.ToLocalTime():HH:mm}");
             }
         var block = Usability.Blocked(v, now);
         var (_, error) = Classify(v, block);

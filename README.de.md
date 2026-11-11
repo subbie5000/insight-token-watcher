@@ -141,6 +141,11 @@ gelesen – das kostet keine Tokens. Setup-Tokens (`claude setup-token`) dürfen
 lesen; für sie sendet die App stattdessen alle 15 Minuten eine 1-Token-Anfrage mit dem
 Fable-Modell – die einzige Anfrage, die das gemessene Fable-Limit selbst berührt.
 
+Dazwischen zeigt die App den letzten Fable-Wert weiter; ist er älter als der Rest, nennt der
+Tooltip seine Uhrzeit („Wert von 11:29“). Sofort neu gelesen wird er, wenn ein allgemeines
+Fenster zurückgesetzt wurde (durch Zeitablauf oder von Hand in claude.ai) und bei einem Klick
+auf die Zeile oder den Aktualisieren-Knopf – höchstens alle 30 Sekunden.
+
 ## Build aus dem Quellcode
 
 Voraussetzung: .NET 8 SDK. Dann:

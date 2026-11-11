@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.11.1] - 2026-11-11
+
+### Fixed
+- **The Fable value stayed at its figure from before a reset** – for up to five minutes with
+  a login token, fifteen with a setup token – while week and 5 h were already current
+  ("FABLE LEER 100 %" next to a week of 50 % after a reset in claude.ai). The model limits
+  come from a request of their own that is made less often; now a general window that falls
+  back or gets a later reset time makes the app read them with the same poll.
+- **"Measure now" did not measure the Fable limit.** A click on a row or on the refresh
+  button re-polled the general windows and reused the stored model limits. It now reads them
+  as well (at most every 30 seconds).
+
+### Added
+- The tooltip names the time of a model limit that is older than the rest ("Wert von 11:29").
+- `status.json` lists the shown values per account (`values`: usage or balance, and when
+  each was read).
+
 ## [1.11.0] - 2026-11-10
 
 ### Changed

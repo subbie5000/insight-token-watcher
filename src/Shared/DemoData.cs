@@ -13,7 +13,8 @@ internal static class DemoData
     {
         // the Fable week resets together with the general week
         QuotaWindow[] Claude(double fableUsed, double weekResetHours, params QuotaWindow[] general) => fable
-            ? general.Append(W("7d_fable", "Fable-Woche", 10080, fableUsed, now.AddHours(weekResetHours), 0, scope: "Fable")).ToArray()
+            ? general.Append(Read(W("7d_fable", "Fable-Woche", 10080, fableUsed, now.AddHours(weekResetHours), 0, scope: "Fable"),
+                now.AddMinutes(-4))).ToArray()
             : general;
 
         var list = new List<AccountView>
@@ -51,6 +52,13 @@ internal static class DemoData
     }
 
     private static readonly Dictionary<QuotaWindow, double> Rates = new();
+
+    /// <summary>A value that was read before the snapshot it is shown with (model limits).</summary>
+    private static QuotaWindow Read(QuotaWindow w, DateTimeOffset at)
+    {
+        w.MeasuredAtUtc = at;
+        return w;
+    }
 
     private static QuotaWindow W(string key, string label, double minutes, double used, DateTimeOffset reset,
         double ratePerMin, string? note = null, double? total = null, string? scope = null)

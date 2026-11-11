@@ -35,6 +35,19 @@ public sealed class AccountView
 
     /// <summary>The latest poll failed, but older valid values exist.</summary>
     public bool IsStale => Snapshot is { Ok: false } && LastGood is not null;
+
+    /// <summary>The shown values as status.json lists them (remote diagnosis – numbers only):
+    /// usage in percent or the balance, and when each value was read.</summary>
+    public IEnumerable<object> StatusValues() =>
+        Display is not { } snap
+            ? Array.Empty<object>()
+            : snap.Windows.Where(w => !w.IsInfoOnly).Select(w => (object)new
+            {
+                key = w.Key,
+                used = w.UsedFraction is { } u ? Math.Round(u * 100, 1) : (double?)null,
+                remaining = w.IsBalance ? w.Remaining : null,
+                at = (w.MeasuredAtUtc ?? snap.AtUtc).ToLocalTime()
+            });
 }
 
 internal sealed class AccountRuntime
@@ -146,9 +159,17 @@ public sealed class PollingEngine : IDisposable
     public void ForceRefresh(Guid? id = null)
     {
         foreach (var rt in _runtimes.Values)
-            if (id is null || rt.Config.Id == id.Value)
-                lock (rt.Gate)
-                    rt.NextPollUtc = DateTimeOffset.MinValue;
+        {
+            if (id is not null && rt.Config.Id != id.Value) continue;
+            ProviderKind provider;
+            lock (rt.Gate)
+            {
+                rt.NextPollUtc = DateTimeOffset.MinValue;
+                provider = rt.Config.Provider;
+            }
+            // "measure now" means everything, also what a poller would reuse for a few minutes
+            ProviderInfo.Poller(provider).Invalidate(rt.Config.Id);
+        }
     }
 
     public IReadOnlyList<AccountView> GetView()

@@ -24,23 +24,49 @@ public sealed class AnthropicPoller : IAccountPoller
     // A weekly window moves slowly: the free endpoint is asked every 5 min, the fallback ping
     // (it costs a few tokens of the very limit it measures) every 15 min. In between the last
     // values are reported again; after 45 min without a fresh value they are dropped.
+    // Two things cut the wait short (never below ScopedMinGap): a general window that was
+    // reset, and the user asking for fresh values.
     private static readonly TimeSpan UsageInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ScopedPingInterval = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan ScopedMaxAge = TimeSpan.FromMinutes(45);
+    private static readonly TimeSpan ScopedMinGap = TimeSpan.FromSeconds(30);
 
     private sealed class ScopedState
     {
         public int KeyHash;
         public bool UsageForbidden;
         public DateTimeOffset NextTryUtc;
+        public DateTimeOffset LastTryUtc;
         public DateTimeOffset MeasuredUtc;
         public List<QuotaWindow> Windows = new();
+
+        /// <summary>The general windows of the previous poll: usage and reset time by key.</summary>
+        public Dictionary<string, (double Used, DateTimeOffset? Reset)> General = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Read the model limits at the next poll – but not within
+        /// <see cref="ScopedMinGap"/> of the last read (several clicks, a flapping value).</summary>
+        public void Hurry()
+        {
+            var soonest = LastTryUtc + ScopedMinGap;
+            if (soonest < NextTryUtc) NextTryUtc = soonest;
+        }
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, ScopedState> ScopedStates = new();
 
+    /// <summary>Test hook: the clock the model-limit schedule runs on.</summary>
+    internal static Func<DateTimeOffset> Clock = () => DateTimeOffset.UtcNow;
+
     /// <summary>Test hook: forget the cached model-scoped limits.</summary>
     internal static void ResetScopedCache() => ScopedStates.Clear();
+
+    /// <summary>The user asked for fresh values ("measure now"): the model limits are read again
+    /// with the next poll instead of being reused until their interval is over.</summary>
+    public void Invalidate(Guid accountId)
+    {
+        if (!ScopedStates.TryGetValue(accountId, out var st)) return;
+        lock (st) st.Hurry();
+    }
 
     public async Task<AccountSnapshot> PollAsync(AccountConfig cfg, string plainKey, HttpClient http, CancellationToken ct)
     {
@@ -48,17 +74,28 @@ public sealed class AnthropicPoller : IAccountPoller
         var snap = ParseHeaders(cfg.Id, headers, status, body);
         // only subscriptions have model-scoped limits; the header values win over the endpoint's
         if (snap.Ok && cfg.Auth == AuthKind.Bearer)
-            foreach (var w in await ScopedWindowsAsync(cfg, plainKey, http, ct))
+            foreach (var w in await ScopedWindowsAsync(cfg, plainKey, snap.Windows, http, ct))
                 if (snap.Windows.All(x => !x.Key.Equals(w.Key, StringComparison.OrdinalIgnoreCase)))
                     snap.Windows.Add(w);
         return snap;
     }
 
+    /// <summary>
+    /// A general window fell back or got a later reset time: it was reset – by time or by hand in
+    /// claude.ai. The model limits reset with it, so their stored values are from before the
+    /// reset. Within a window the usage only grows; one point down is rounding, not a reset.
+    /// </summary>
+    private static bool WasReset(IReadOnlyDictionary<string, (double Used, DateTimeOffset? Reset)> before,
+        IEnumerable<QuotaWindow> general) =>
+        general.Any(w => before.TryGetValue(w.Key, out var b) &&
+                         ((w.UsedFraction is { } used && used < b.Used - 0.015) ||
+                          (w.ResetAtUtc is { } reset && b.Reset is { } old && reset - old > TimeSpan.FromMinutes(1))));
+
     private static async Task<IReadOnlyList<QuotaWindow>> ScopedWindowsAsync(AccountConfig cfg, string plainKey,
-        HttpClient http, CancellationToken ct)
+        IReadOnlyList<QuotaWindow> measured, HttpClient http, CancellationToken ct)
     {
         var st = ScopedStates.GetOrAdd(cfg.Id, _ => new ScopedState());
-        var now = DateTimeOffset.UtcNow;
+        var now = Clock();
         bool due, forbidden;
         lock (st)
         {
@@ -70,8 +107,19 @@ public sealed class AnthropicPoller : IAccountPoller
                 st.UsageForbidden = false;
                 st.NextTryUtc = default;
             }
+            // Without this the popup showed the new week next to the model limit from before
+            // the reset ("FABLE LEER 100 %") until the interval was over.
+            var general = measured.Where(w => w.Scope is null).ToList();
+            if (WasReset(st.General, general)) st.Hurry();
+            st.General = general.Where(w => w.UsedFraction is not null)
+                .ToDictionary(w => w.Key, w => (w.UsedFraction!.Value, w.ResetAtUtc), StringComparer.OrdinalIgnoreCase);
+
             due = now >= st.NextTryUtc;
-            if (due) st.NextTryUtc = now + UsageInterval;
+            if (due)
+            {
+                st.NextTryUtc = now + UsageInterval;
+                st.LastTryUtc = now;
+            }
             forbidden = st.UsageForbidden;
         }
 
@@ -104,6 +152,7 @@ public sealed class AnthropicPoller : IAccountPoller
                 if (forbidden) st.NextTryUtc = now + ScopedPingInterval;
                 if (fresh is not null)
                 {
+                    foreach (var w in fresh) w.MeasuredAtUtc = now;
                     st.Windows = fresh;
                     st.MeasuredUtc = now;
                 }

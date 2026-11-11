@@ -84,6 +84,10 @@ public sealed class QuotaWindow
     /// which knows whether an empty balance stops the account.</summary>
     public bool Unusable { get; set; }
 
+    /// <summary>When the value was read, if that was not with the snapshot it is part of: model
+    /// limits come from a request of their own that is made less often.</summary>
+    public DateTimeOffset? MeasuredAtUtc { get; set; }
+
     /// <summary>Set when the limit only applies to one model family (e.g. "Fable"): such a window
     /// has its own column and does not decide whether the account as a whole is usable.</summary>
     public string? Scope { get; set; }

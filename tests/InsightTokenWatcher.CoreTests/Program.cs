@@ -1234,6 +1234,174 @@ Run("Anthropic poll: setup token (usage 403) falls back to a ping with the scope
     Check(calls.Count == 4 && calls[3] == "ping-haiku", "no extra request on the next poll: " + string.Join(",", calls));
 });
 
+// A subscription whose limits can be steered from the test: the Haiku ping reports the general
+// week, the usage endpoint (or, for a setup token, the ping with the Fable model) the Fable week.
+(HttpClient http, List<string> calls) Subscription(Func<string> week, Func<int> fablePercent, bool setupToken = false)
+{
+    var calls = new List<string>();
+    var http = new HttpClient(new FakeHandler((req, _) =>
+    {
+        if (req.RequestUri!.AbsolutePath == "/api/oauth/usage")
+        {
+            calls.Add("usage");
+            return setupToken
+                ? Reply(403, """{"type":"error","error":{"type":"permission_error","message":"OAuth token does not meet scope requirement user:profile"}}""")
+                : Reply(200, "{\"limits\":[{\"kind\":\"weekly_scoped\",\"group\":\"weekly\",\"percent\":" + fablePercent() +
+                             ",\"resets_at\":\"2026-11-16T04:00:00+00:00\",\"scope\":{\"model\":{\"display_name\":\"Fable\"}}}]}");
+        }
+        var fablePing = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult().Contains("\"model\":\"" + AnthropicPoller.ScopedPingModel + "\"");
+        calls.Add(fablePing ? "ping-fable" : "ping");
+        var h = fablePing
+            ? FableHeaders((fablePercent() / 100.0).ToString(System.Globalization.CultureInfo.InvariantCulture))
+            : HaikuHeaders();
+        h["anthropic-ratelimit-unified-7d-utilization"] = week();
+        return Reply(200, "{}", h);
+    }));
+    return (http, calls);
+}
+
+double Used(AccountSnapshot s, string key) => s.Windows.Single(w => w.Key == key).UsedFraction!.Value;
+
+// 2026-11-11: the limits of five accounts were reset by hand in claude.ai. A minute later the
+// popup showed the new week (50 %) next to the old Fable value (100 %, "FABLE LEER").
+Run("Anthropic poll: a week that fell back (reset) re-reads the Fable limit at once", () =>
+{
+    AnthropicPoller.ResetScopedCache();
+    var t = new DateTimeOffset(2026, 11, 11, 10, 27, 0, TimeSpan.Zero);
+    AnthropicPoller.Clock = () => t;
+    try
+    {
+        var week = "1.0"; var fable = 100;
+        var (http, calls) = Subscription(() => week, () => fable);
+        using var _ = http;
+        var cfg = new AccountConfig { Name = "C", Provider = ProviderKind.Anthropic, Auth = AuthKind.Bearer };
+        var poller = new AnthropicPoller();
+        var before = poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        Check(Used(before, "7d") == 1.0 && Used(before, "7d_fable") == 1.0, "before the reset: week and Fable full");
+
+        t = t.AddMinutes(1); week = "0.5"; fable = 0;
+        var after = poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        Check(Used(after, "7d") == 0.5, "the ping reports the new week");
+        Check(Used(after, "7d_fable") == 0, "Fable must not stay at its value from before the reset: " + Used(after, "7d_fable"));
+        Check(string.Join(",", calls) == "ping,usage,ping,usage", "calls " + string.Join(",", calls));
+
+        t = t.AddMinutes(1); week = "0.52";   // usage grows: no reason to ask again
+        poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        t = t.AddMinutes(1); week = "0.51";   // one point down is rounding, not a reset
+        poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        Check(string.Join(",", calls) == "ping,usage,ping,usage,ping,ping", "no extra request without a reset: " + string.Join(",", calls));
+
+        t = t.AddMinutes(4);                  // the regular five minutes after the last read
+        poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        Check(calls.Count == 8 && calls[7] == "usage", "regular re-read after 5 min: " + string.Join(",", calls));
+    }
+    finally { AnthropicPoller.Clock = () => DateTimeOffset.UtcNow; }
+});
+
+Run("Anthropic poll: setup token – a week that fell back triggers the Fable ping at once", () =>
+{
+    AnthropicPoller.ResetScopedCache();
+    var t = new DateTimeOffset(2026, 11, 11, 10, 27, 0, TimeSpan.Zero);
+    AnthropicPoller.Clock = () => t;
+    try
+    {
+        var week = "0.9"; var fable = 87;
+        var (http, calls) = Subscription(() => week, () => fable, setupToken: true);
+        using var _ = http;
+        var cfg = new AccountConfig { Name = "S", Provider = ProviderKind.Anthropic, Auth = AuthKind.Bearer };
+        var poller = new AnthropicPoller();
+        var before = poller.PollAsync(cfg, "setup", http, default).GetAwaiter().GetResult();
+        Check(Math.Abs(Used(before, "7d_fable") - 0.87) < 1e-9, "before: 87 %");
+
+        t = t.AddMinutes(1); week = "0.1"; fable = 0;
+        var after = poller.PollAsync(cfg, "setup", http, default).GetAwaiter().GetResult();
+        Check(Used(after, "7d_fable") == 0, "Fable after the reset: " + Used(after, "7d_fable"));
+        Check(string.Join(",", calls) == "ping,usage,ping-fable,ping,ping-fable", "calls " + string.Join(",", calls));
+
+        t = t.AddMinutes(5);                  // without a reset the ping stays at every 15 min
+        poller.PollAsync(cfg, "setup", http, default).GetAwaiter().GetResult();
+        Check(calls.Count == 6 && calls[5] == "ping", "no Fable ping after 5 min: " + string.Join(",", calls));
+    }
+    finally { AnthropicPoller.Clock = () => DateTimeOffset.UtcNow; }
+});
+
+Run("Anthropic poll: 'measure now' re-reads the Fable limit – at most every 30 s", () =>
+{
+    AnthropicPoller.ResetScopedCache();
+    var t = new DateTimeOffset(2026, 11, 11, 10, 27, 0, TimeSpan.Zero);
+    AnthropicPoller.Clock = () => t;
+    try
+    {
+        var fable = 87;
+        var (http, calls) = Subscription(() => "0.54", () => fable);
+        using var _ = http;
+        var cfg = new AccountConfig { Name = "C", Provider = ProviderKind.Anthropic, Auth = AuthKind.Bearer };
+        using var eng = new PollingEngine();
+        eng.Reconfigure(new[] { (cfg, "tok") });
+        var poller = new AnthropicPoller();
+        poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+
+        // a Fable-only reset: the week does not move, so only the user knows
+        t = t.AddSeconds(40); fable = 0;
+        eng.ForceRefresh(cfg.Id);             // click on the row / the refresh button
+        var clicked = poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        Check(Used(clicked, "7d_fable") == 0, "a click measures everything anew: " + Used(clicked, "7d_fable"));
+        Check(string.Join(",", calls) == "ping,usage,ping,usage", "calls " + string.Join(",", calls));
+
+        t = t.AddSeconds(5);
+        eng.ForceRefresh();                   // impatient second click (all accounts)
+        poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        Check(calls.Count == 5, "not again within 30 s: " + string.Join(",", calls));
+        t = t.AddSeconds(30);
+        poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        Check(calls.Count == 7 && calls[6] == "usage", "but the click is not lost: " + string.Join(",", calls));
+    }
+    finally { AnthropicPoller.Clock = () => DateTimeOffset.UtcNow; }
+});
+
+Run("Anthropic poll: a reused Fable value says when it was read", () =>
+{
+    AnthropicPoller.ResetScopedCache();
+    var t = new DateTimeOffset(2026, 11, 11, 10, 27, 0, TimeSpan.Zero);
+    AnthropicPoller.Clock = () => t;
+    try
+    {
+        var (http, calls) = Subscription(() => "0.54", () => 87);
+        using var _ = http;
+        var cfg = new AccountConfig { Name = "C", Provider = ProviderKind.Anthropic, Auth = AuthKind.Bearer };
+        var poller = new AnthropicPoller();
+        var first = poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        var read = t;
+        Check(first.Windows.Single(w => w.Key == "7d_fable").MeasuredAtUtc == read, "read with the first poll");
+        Check(first.Windows.Single(w => w.Key == "7d").MeasuredAtUtc is null, "the ping's own windows are as old as the snapshot");
+        t = t.AddMinutes(3);
+        var later = poller.PollAsync(cfg, "tok", http, default).GetAwaiter().GetResult();
+        Check(later.Windows.Single(w => w.Key == "7d_fable").MeasuredAtUtc == read, "three minutes later still the value of 10:27");
+    }
+    finally { AnthropicPoller.Clock = () => DateTimeOffset.UtcNow; }
+});
+
+Run("status.json: values per window with the time they were read", () =>
+{
+    var cfg = new AccountConfig { Name = "C", Provider = ProviderKind.Anthropic };
+    var at = new DateTimeOffset(2026, 11, 11, 10, 34, 10, TimeSpan.Zero);
+    var snap = new AccountSnapshot { AccountId = cfg.Id, Ok = true, AtUtc = at };
+    snap.Windows.Add(new QuotaWindow { Key = "7d", WindowMinutes = 10080, UsedFraction = 0.5 });
+    snap.Windows.Add(new QuotaWindow { Key = "7d_fable", Scope = "Fable", WindowMinutes = 10080, UsedFraction = 1.0, MeasuredAtUtc = at.AddMinutes(-4) });
+    snap.Windows.Add(new QuotaWindow { Key = "balance", IsBalance = true, Remaining = 0.59, Unit = "USD" });
+    snap.Windows.Add(new QuotaWindow { Key = "key-info", IsInfoOnly = true, Note = "x" });
+    var json = System.Text.Json.JsonSerializer.Serialize(new AccountView { Config = cfg, Snapshot = snap, LastGood = snap }.StatusValues());
+    using var doc = System.Text.Json.JsonDocument.Parse(json);
+    var v = doc.RootElement.EnumerateArray().ToList();
+    Check(v.Count == 3, "info-only values are left out: " + json);
+    Check(v[0].GetProperty("key").GetString() == "7d" && v[0].GetProperty("used").GetDouble() == 50, "week 50 %: " + json);
+    Check(v[0].GetProperty("at").GetDateTimeOffset() == at, "read with the snapshot");
+    Check(v[1].GetProperty("used").GetDouble() == 100 && v[1].GetProperty("at").GetDateTimeOffset() == at.AddMinutes(-4),
+        "the Fable value is four minutes older, and the file says so: " + json);
+    Check(v[2].GetProperty("remaining").GetDouble() == 0.59 && v[2].GetProperty("used").ValueKind == System.Text.Json.JsonValueKind.Null, "balance: " + json);
+    Check(!new AccountView { Config = cfg }.StatusValues().Any(), "no data: empty");
+});
+
 Run("Anthropic poll: API key – no usage request, no Claude Code line; failed extra request keeps the poll", () =>
 {
     AnthropicPoller.ResetScopedCache();

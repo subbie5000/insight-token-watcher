@@ -1086,6 +1086,9 @@ internal sealed class PopupCanvas : Control
                     sb.Append($" · Reset {r.ToLocalTime():ddd dd.MM. HH:mm} (in {Formatting.Span(r - now)})");
                 if (WindowLayout.ElapsedFraction(w, now) is { } elapsed)
                     sb.Append($" · Fenster zu {elapsed * 100:0} % um");
+                // a model limit is read less often than the rest: say so when it is older
+                if (w.MeasuredAtUtc is { } read && snap.AtUtc - read > TimeSpan.FromSeconds(90))
+                    sb.Append($" · Wert von {read.ToLocalTime():HH:mm}");
                 sb.AppendLine();
                 if (ev is not null && !w.IsInfoOnly)
                     sb.AppendLine("    " + (ev.HasRate || ev.Health != Health.Ok
