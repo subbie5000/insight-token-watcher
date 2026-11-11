@@ -115,6 +115,10 @@ crit notifications use `notify-send` when available.
   line and the row tint (amber for tight, soon-empty or failing accounts).
 - If a poll fails, the last good values stay visible (marked stale) instead of
   being replaced by an error.
+- **An account whose token does not work is greyed out** – name, old values and all – and
+  says why: "Token abgelaufen" (expired), "Token widerrufen" (revoked, e.g. renewed by the
+  tool that owns it), "Token ungültig" (rejected) or "kein Schlüssel" (none stored). It
+  counts as "Token ungültig" in the summary, not as an error.
 - Tray icon: a ring with the mean weekly usage of your Anthropic accounts and the percent
   in the middle; a corner dot marks accounts with problems.
 - Balloon warning when an account starts running dry or gets blocked (can be disabled).
@@ -189,9 +193,9 @@ touching the tray.
 `claude` OAuth access tokens expire after hours and are rotated by whichever tool
 owns the refresh token. Insight Token Watcher deliberately does **not** refresh tokens: the
 refresh token belongs to the tool that issued the login, and consuming it elsewhere
-would break that tool. When a token expires, the account keeps showing its last
-values marked "Token abgelaufen" until a fresh token arrives — paste one, re-import
-it, or create a long-lived token once via `claude setup-token`.
+would break that tool. When a token expires or is replaced, the account is greyed out with
+its last values ("Token abgelaufen" / "Token widerrufen") until a fresh token arrives —
+paste one, re-import it, or create a long-lived token once via `claude setup-token`.
 
 ## Build
 

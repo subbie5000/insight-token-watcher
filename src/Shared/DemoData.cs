@@ -34,6 +34,12 @@ internal static class DemoData
             Quota("Anthropic 4", ProviderKind.Anthropic, now, Claude(1.0, 146,
                 W("5h", "5-Std-Fenster", 300, 0.03, now.AddHours(4.8), 0),
                 W("7d", "7-Tage-Fenster", 10080, 0.08, now.AddHours(146), 0))),
+            // the owning tool renewed the token between two syncs: greyed out, old values, no alarm
+            Stale("Anthropic 5", ProviderKind.Anthropic, now, FailureKind.AuthInvalid,
+                "HTTP 401 – keine Rate-Limit-Header. {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"OAuth access token has been revoked.\"}}",
+                Claude(0.62, 120,
+                    W("5h", "5-Std-Fenster", 300, 0.30, now.AddHours(4.4), 0),
+                    W("7d", "7-Tage-Fenster", 10080, 0.79, now.AddHours(120), 0))),
             Quota("Kimi Code", ProviderKind.KimiCode, now,
                 W("week", "Wochenkontingent", 10080, 0.45, now.AddHours(145), 0.00002, total: 100),
                 W("300m", "5-Std-Fenster", 300, 0.20, now.AddHours(4.1), 0.0006, total: 100)),
@@ -131,7 +137,7 @@ internal static class DemoData
             Snapshot = AccountSnapshot.Failure(cfg.Id, error),
             LastGood = good,
             Evals = evals,
-            Health = Health.Unknown,
+            Health = kind == FailureKind.AuthExpired ? Health.Unknown : Health.Crit, // as the engine sets it
             Failure = kind,
             ConsecutiveFailures = 2,
             PrimarySeries = series

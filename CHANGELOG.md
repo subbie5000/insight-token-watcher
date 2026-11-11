@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.11.2] - 2026-11-11
+
+### Changed
+- **An account whose token does not work is greyed out instead of shown as an error.** Until
+  now a revoked or rejected token gave a red "FEHLER" on an amber card and counted as an
+  error – also when the tool that owns the token had merely renewed it and the next sync
+  brought the new one. Now the whole row is grey (name, status, old values, countdowns), the
+  status names the reason – "Token abgelaufen", "Token widerrufen", "Token ungültig", "kein
+  Schlüssel" – and the summary counts it as "Token ungültig". The warning balloon is unchanged.
+  An account whose limit was reached before the token stopped working stays "GESPERRT".
+
 ## [1.11.1] - 2026-11-11
 
 ### Fixed

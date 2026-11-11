@@ -27,8 +27,9 @@ internal sealed class PopupCanvas : Control
     private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header, SortName, SortShort, SortLong, SortModel }
     private enum RowKind { Data, Loading, Error }
     // Crit = runs dry before its reset (a forecast, the account still works);
-    // Blocked = cannot be used right now (Usability.Blocked)
-    private enum RowState { Ok, Warn, Crit, Blocked, Error, Stale, Pending }
+    // Blocked = cannot be used right now (Usability.Blocked);
+    // NoToken = the token does not work, nothing can be measured (TokenStatus.Problem) – greyed out
+    private enum RowState { Ok, Warn, Crit, Blocked, Error, NoToken, Stale, Pending }
 
     private sealed class RowInfo
     {
@@ -53,9 +54,16 @@ internal sealed class PopupCanvas : Control
         // Text tones on this row's card. A tinted card is lighter than a neutral one, so the dim
         // tones of the opaque palette lose contrast there (grey 3.5:1, red 3.7:1): tinted cards
         // take the brighter tones of the glass palette. On glass both are the same anyway.
-        public Color Faint => Tinted ? GlassText.Faint : Theme.PFaint;
+        public Color Faint => Greyed ? Theme.PGreyed : Tinted ? GlassText.Faint : Theme.PFaint;
         public Color Old => Tinted ? GlassText.Stale : Theme.PStale;
         public Color Crit => Tinted ? GlassText.Crit : Theme.PCrit;
+
+        /// <summary>The token does not work: the whole row is greyed out – name, status, old
+        /// values, countdowns – so it reads as "not measured", not as an alarm.</summary>
+        public bool Greyed => State == RowState.NoToken;
+        public Color Name => Greyed ? Theme.PGreyed : Stale ? Theme.PMuted : Theme.Text;
+        public Color Muted => Greyed ? Theme.PGreyed : Theme.PMuted;
+        public Color Tick => Greyed ? Theme.PGreyed : Stale ? Theme.PMuted : Theme.Text;
         public bool Stale;
         public string StatusText = "";
         public Color StatusColor;
@@ -239,15 +247,16 @@ internal sealed class PopupCanvas : Control
 
     private static void DescribeStatus(AccountView v, RowInfo row)
     {
+        // a token that does not work is no alarm: the row is greyed out and says what is wrong
+        var token = TokenStatus.Problem(v);
         row.State = row.Kind switch
         {
-            RowKind.Error => RowState.Error,
+            RowKind.Error => token is not null ? RowState.NoToken : RowState.Error,
             RowKind.Loading => RowState.Pending,
             // a limit that was reached stays reached, even when the latest poll failed
             _ when row.Block is not null => RowState.Blocked,
-            _ when row.Stale => v.Failure == FailureKind.AuthExpired ||
-                                (v.Failure == FailureKind.Network && v.Health != Health.Crit)
-                ? RowState.Stale
+            _ when row.Stale => token is not null ? RowState.NoToken
+                : v.Failure == FailureKind.Network && v.Health != Health.Crit ? RowState.Stale
                 : RowState.Error,
             _ => v.Health switch
             {
@@ -270,9 +279,8 @@ internal sealed class PopupCanvas : Control
             RowState.Crit => ("LÄUFT LEER", Theme.PWarn),
             RowState.Blocked => ("GESPERRT", row.Crit),
             RowState.Error => ("FEHLER", row.Crit),
-            RowState.Stale => v.Failure == FailureKind.AuthExpired
-                ? ("Token abgelaufen", Theme.PMuted)
-                : ("offline", Theme.PWarn),
+            RowState.NoToken => (token ?? "Token ungültig", Theme.PGreyed),
+            RowState.Stale => ("offline", Theme.PWarn),
             _ => ("warte …", Theme.PMuted)
         };
     }
@@ -290,9 +298,10 @@ internal sealed class PopupCanvas : Control
         if (row.Stale)
         {
             var at = v.LastGood!.AtUtc.ToLocalTime();
+            if (TokenStatus.Problem(v) is { } token)
+                return ($"{token} – letzte Werte von {at:HH:mm}", row.Muted); // grey with the row, muted on a blocked card
             return v.Failure switch
             {
-                FailureKind.AuthExpired => ($"Token abgelaufen – letzte Werte von {at:HH:mm}", Theme.PMuted),
                 FailureKind.Network => ($"Keine Verbindung – letzte Werte von {at:HH:mm}", Theme.PWarn),
                 _ => ($"Abfrage fehlgeschlagen ({ShortError(v.Snapshot?.Error)}) – Werte von {at:HH:mm}", row.Crit)
             };
@@ -716,7 +725,7 @@ internal sealed class PopupCanvas : Control
     /// would not fit the width are left out, least urgent first.</summary>
     private void DrawSummary(Graphics g, int x, int y, int limit)
     {
-        int blocked = 0, crit = 0, errors = 0, warn = 0, stale = 0, ok = 0;
+        int blocked = 0, crit = 0, errors = 0, warn = 0, noToken = 0, stale = 0, ok = 0;
         foreach (var r in _rows)
             switch (r.State)
             {
@@ -724,6 +733,7 @@ internal sealed class PopupCanvas : Control
                 case RowState.Crit: crit++; break;
                 case RowState.Error: errors++; break;
                 case RowState.Warn: warn++; break;
+                case RowState.NoToken: noToken++; break;
                 case RowState.Stale: stale++; break;
                 case RowState.Ok: ok++; break;
             }
@@ -739,6 +749,7 @@ internal sealed class PopupCanvas : Control
         if (errors > 0) parts.Add(($"{errors} Fehler", Theme.PCrit));
         if (crit > 0) parts.Add((crit == 1 ? "1 läuft leer" : $"{crit} laufen leer", Theme.PWarn));
         if (warn > 0) parts.Add(($"{warn} knapp", Theme.PWarn));
+        if (noToken > 0) parts.Add(($"{noToken} Token ungültig", Theme.PStale));
         if (stale > 0) parts.Add(($"{stale} veraltet", Theme.PStale));
         if (ok > 0) parts.Add(($"{ok} OK", Theme.Ok));
         foreach (var (text, dot) in parts)
@@ -805,8 +816,7 @@ internal sealed class PopupCanvas : Control
         if (_glass) Gfx.DrawRound(g, GlassEdge, RectangleF.Inflate(card, -0.5f, -0.5f), S(8));
 
         // name + second line (provider, or the state when something is wrong)
-        Gfx.Text(g, v.Config.Name, Theme.FName, new Rectangle(NameX, y + S(7), NameWidth, S(18)),
-            row.Stale ? Theme.PMuted : Theme.Text);
+        Gfx.Text(g, v.Config.Name, Theme.FName, new Rectangle(NameX, y + S(7), NameWidth, S(18)), row.Name);
         var sy = y + S(26);
         Gfx.Text(g, row.StatusText, Theme.FTiny, new Rectangle(NameX, sy, NameWidth, S(15)), row.StatusColor);
         if (v.Polling)
@@ -824,7 +834,7 @@ internal sealed class PopupCanvas : Control
                 break;
             case RowKind.Error:
                 TextRenderer.DrawText(g, ShortError(v.Snapshot?.Error), Theme.FSmall,
-                    new Rectangle(x1, y + S(8), cellsW, S(34)), row.Crit,
+                    new Rectangle(x1, y + S(8), cellsW, S(34)), row.Greyed ? Theme.PGreyed : row.Crit,
                     TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding |
                     TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.NoPrefix);
                 break;
@@ -906,7 +916,7 @@ internal sealed class PopupCanvas : Control
             var tw = Gfx.Measure(g, countdown, Theme.FTiny);
             if (tw <= room)
             {
-                Gfx.Text(g, countdown, Theme.FTiny, new Rectangle(right - tw - S(1), y + S(12), tw + S(2), S(15)), Theme.PMuted);
+                Gfx.Text(g, countdown, Theme.FTiny, new Rectangle(right - tw - S(1), y + S(12), tw + S(2), S(15)), row.Muted);
                 right -= tw + S(4);
                 room -= tw + S(4);
                 var iw = S(13);
@@ -931,7 +941,7 @@ internal sealed class PopupCanvas : Control
         var bar = new RectangleF(x, y + S(32), cw, S(6));
         Gfx.Bar(g, bar, win.UsedFraction ?? 0, color, Theme.TrackOnCard);
         if (WindowLayout.ElapsedFraction(win, now) is { } elapsed)
-            DrawPaceTick(g, bar, elapsed, row.Stale ? Theme.PMuted : Theme.Text);
+            DrawPaceTick(g, bar, elapsed, row.Tick);
     }
 
     /// <summary>Pace tick: how much of the window's time has passed. A bar that ends left of it
@@ -1036,7 +1046,7 @@ internal sealed class PopupCanvas : Control
     private void DrawExtra(Graphics g, RowInfo row, QuotaWindow win, int y, int w, DateTimeOffset now)
     {
         Gfx.Text(g, win.IsBalance ? "Guthaben" : WindowLayout.ShortLabel(win), Theme.FTiny,
-            new Rectangle(NameX, y + S(2), NameWidth, S(15)), Theme.PMuted);
+            new Rectangle(NameX, y + S(2), NameWidth, S(15)), row.Muted);
         var x = CellsX;
         var width = CellsWidth(w);
         if (win.IsInfoOnly)
@@ -1058,7 +1068,7 @@ internal sealed class PopupCanvas : Control
                 text += $" · noch {Formatting.Count(win.Remaining)} von {Formatting.Count(win.Total)}";
             if (win.ResetAtUtc is { } reset && reset > now)
                 text += " · Reset in " + Formatting.Span(reset - now);
-            Gfx.Text(g, text, Theme.FTiny, new Rectangle(x + S(78), y + S(2), width - S(78), S(15)), Theme.PMuted);
+            Gfx.Text(g, text, Theme.FTiny, new Rectangle(x + S(78), y + S(2), width - S(78), S(15)), row.Muted);
         }
     }
 

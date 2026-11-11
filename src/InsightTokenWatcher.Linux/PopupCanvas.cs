@@ -29,16 +29,29 @@ internal sealed class PopupCanvas : Control
 
     private enum Zone { None, Row, Refresh, Settings, Pin, Scrollbar, Header, SortName, SortShort, SortLong, SortModel }
     // Crit = runs dry before its reset (a forecast, the account still works);
-    // Blocked = cannot be used right now (Usability.Blocked)
-    private enum RowState { Ok, Warn, Crit, Blocked, Error, Stale, Pending }
+    // Blocked = cannot be used right now (Usability.Blocked);
+    // NoToken = the token does not work, nothing can be measured (TokenStatus.Problem) – greyed out
+    private enum RowState { Ok, Warn, Crit, Blocked, Error, NoToken, Stale, Pending }
 
-    /// <summary>Text tones on a row's card: a tinted card takes the brighter ones (see Ui).</summary>
-    private readonly record struct Tones(IBrush Faint, IBrush Old, IBrush Crit)
+    /// <summary>Text tones on a row's card: a tinted card takes the brighter ones (see Ui). A row
+    /// whose token does not work is greyed out as a whole – name, status, countdowns, old values –
+    /// so it reads as "not measured", not as an alarm.</summary>
+    private readonly record struct Tones(IBrush Name, IBrush Muted, IBrush Faint, IBrush Old, IBrush Crit, IBrush Tick)
     {
-        private static readonly Tones Card = new(Ui.FaintBrush, Ui.StaleBrush, Ui.CritBrush);
-        private static readonly Tones Tint = new(Ui.FaintOnTintBrush, Ui.StaleOnTintBrush, Ui.CritOnTintBrush);
+        private static readonly Tones Card = new(Ui.TextBrush, Ui.MutedBrush, Ui.FaintBrush, Ui.StaleBrush, Ui.CritBrush, Ui.TextBrush);
+        private static readonly Tones Tint = Card with
+        {
+            Faint = Ui.FaintOnTintBrush, Old = Ui.StaleOnTintBrush, Crit = Ui.CritOnTintBrush
+        };
+        private static readonly Tones Grey = new(Ui.FaintBrush, Ui.FaintBrush, Ui.FaintBrush, Ui.StaleBrush, Ui.FaintBrush, Ui.FaintBrush);
 
-        public static Tones For(RowState state) => TintFor(state) is null ? Card : Tint;
+        /// <param name="old">The values are from an earlier poll (the latest one failed).</param>
+        public static Tones For(RowState state, bool old)
+        {
+            if (state == RowState.NoToken) return Grey;
+            var t = TintFor(state) is null ? Card : Tint;
+            return old ? t with { Name = Ui.MutedBrush, Tick = Ui.MutedBrush } : t;
+        }
     }
 
     /// <summary>Overlay on the card: red = cannot be used right now, amber = a forecast or an error
@@ -152,7 +165,7 @@ internal sealed class PopupCanvas : Control
             var block = Usability.Blocked(v, utcNow);
             var (state, error) = Classify(v, block);
             var (sub, subBrush) = Status(v, state, layout);
-            var tones = Tones.For(state);
+            var tones = Tones.For(state, v.IsStale);
             var notes = new List<(string text, IBrush brush)>();
             // old values raise no alarms (as on Windows) – the note below says why they are old.
             // Red only for what blocks the account right now; a forecast is amber.
@@ -161,7 +174,7 @@ internal sealed class PopupCanvas : Control
                     notes.Add((line.text, line.blocks ? tones.Crit : Ui.WarnBrush));
             // windows without a column of their own (e.g. a second model limit)
             foreach (var w in layout.Extras.Where(w => !w.IsBalance && !w.IsInfoOnly))
-                notes.Add((ExtraLine(w, utcNow), Ui.MutedBrush));
+                notes.Add((ExtraLine(w, utcNow), tones.Muted));
             if (v.Display is { } d)
             {
                 foreach (var w in d.Windows.Where(w => w.IsBalance && !string.IsNullOrEmpty(w.Note)))
@@ -170,9 +183,8 @@ internal sealed class PopupCanvas : Control
                     notes.Add((w.Note!, tones.Faint));
             }
             if (error is not null)
-                notes.Add((error, !v.IsStale ? tones.Crit
-                    : v.Failure == FailureKind.AuthExpired ? Ui.MutedBrush
-                    : v.Failure == FailureKind.Network ? Ui.WarnBrush
+                notes.Add((error, TokenStatus.Problem(v) is not null ? tones.Muted // grey with the row, muted on a blocked card
+                    : v.IsStale && v.Failure == FailureKind.Network ? Ui.WarnBrush
                     : tones.Crit));
             // the sort puts the blocked accounts last: a caption sets them apart
             if (state == RowState.Blocked && _sectionY < 0)
@@ -210,22 +222,22 @@ internal sealed class PopupCanvas : Control
     /// <summary>Row state as on Windows; <c>error</c> is the note that explains a failed poll.</summary>
     private static (RowState state, string? error) Classify(AccountView v, Block? block)
     {
+        // a token that does not work is no alarm: the row is greyed out and says what is wrong
+        var token = TokenStatus.Problem(v);
         if (v.Snapshot is { Ok: false } && v.LastGood is null)
-            return (RowState.Error, ShortError(v.Snapshot.Error));
+            return (token is not null ? RowState.NoToken : RowState.Error, ShortError(v.Snapshot.Error));
         if (v.IsStale)
         {
             var at = v.LastGood!.AtUtc.ToLocalTime();
-            var why = v.Failure switch
-            {
-                FailureKind.AuthExpired => $"Token abgelaufen – letzte Werte von {at:HH:mm}",
-                FailureKind.Network => $"Keine Verbindung – letzte Werte von {at:HH:mm}",
-                _ => $"Abfrage fehlgeschlagen ({ShortError(v.Snapshot?.Error)}) – Werte von {at:HH:mm}"
-            };
-            // an expired token gets rotated, a short outage passes – everything else is an error
-            var waiting = v.Failure == FailureKind.AuthExpired ||
-                          (v.Failure == FailureKind.Network && v.Health != Health.Crit);
+            var why = token is not null ? $"{token} – letzte Werte von {at:HH:mm}"
+                : v.Failure == FailureKind.Network ? $"Keine Verbindung – letzte Werte von {at:HH:mm}"
+                : $"Abfrage fehlgeschlagen ({ShortError(v.Snapshot?.Error)}) – Werte von {at:HH:mm}";
+            // a short outage passes – everything else is an error
+            var waiting = v.Failure == FailureKind.Network && v.Health != Health.Crit;
             // a limit that was reached stays reached, even when the latest poll failed
-            return (block is not null ? RowState.Blocked : waiting ? RowState.Stale : RowState.Error, why);
+            return (block is not null ? RowState.Blocked
+                : token is not null ? RowState.NoToken
+                : waiting ? RowState.Stale : RowState.Error, why);
         }
         // no result yet: not "OK"
         if (v.Display is null)
@@ -251,11 +263,10 @@ internal sealed class PopupCanvas : Control
             ? WindowLayout.ModelLimitStatus(limit)
             : "KNAPP", Ui.WarnBrush),
         RowState.Crit => ("LÄUFT LEER", Ui.WarnBrush),
-        RowState.Blocked => ("GESPERRT", Tones.For(state).Crit),
-        RowState.Error => ("FEHLER", Tones.For(state).Crit),
-        RowState.Stale => v.Failure == FailureKind.AuthExpired
-            ? ("Token abgelaufen", Ui.MutedBrush)
-            : ("offline", Ui.WarnBrush),
+        RowState.Blocked => ("GESPERRT", Tones.For(state, v.IsStale).Crit),
+        RowState.Error => ("FEHLER", Tones.For(state, v.IsStale).Crit),
+        RowState.NoToken => (TokenStatus.Problem(v) ?? "Token ungültig", Tones.For(state, v.IsStale).Muted),
+        RowState.Stale => ("offline", Ui.WarnBrush),
         _ => ("warte …", Ui.MutedBrush)
     };
 
@@ -490,7 +501,7 @@ internal sealed class PopupCanvas : Control
     /// least urgent first.</summary>
     private void DrawSummary(DrawingContext g, double x, double y, double limit)
     {
-        int blocked = 0, crit = 0, errors = 0, warn = 0, stale = 0, ok = 0;
+        int blocked = 0, crit = 0, errors = 0, warn = 0, noToken = 0, stale = 0, ok = 0;
         foreach (var r in _rows)
             switch (r.State)
             {
@@ -498,6 +509,7 @@ internal sealed class PopupCanvas : Control
                 case RowState.Crit: crit++; break;
                 case RowState.Error: errors++; break;
                 case RowState.Warn: warn++; break;
+                case RowState.NoToken: noToken++; break;
                 case RowState.Stale: stale++; break;
                 case RowState.Ok: ok++; break;
             }
@@ -512,6 +524,7 @@ internal sealed class PopupCanvas : Control
         if (errors > 0) parts.Add(($"{errors} Fehler", Ui.CritBrush));
         if (crit > 0) parts.Add((crit == 1 ? "1 läuft leer" : $"{crit} laufen leer", Ui.WarnBrush));
         if (warn > 0) parts.Add(($"{warn} knapp", Ui.WarnBrush));
+        if (noToken > 0) parts.Add(($"{noToken} Token ungültig", Ui.StaleBrush));
         if (stale > 0) parts.Add(($"{stale} veraltet", Ui.StaleBrush));
         if (ok > 0) parts.Add(($"{ok} OK", Ui.OkBrush));
         foreach (var (text, dot) in parts)
@@ -588,7 +601,8 @@ internal sealed class PopupCanvas : Control
         if (hover) g.DrawRectangle(Ui.HoverOverlayBrush, null, card, 8, 8);
 
         // name + second line (provider, or the state when something is wrong)
-        Tl(g, v.Config.Name, Ui.FName, v.IsStale ? Ui.MutedBrush : Ui.TextBrush, NameW, 18, FontWeight.SemiBold,
+        var tones = Tones.For(row.State, v.IsStale);
+        Tl(g, v.Config.Name, Ui.FName, tones.Name, NameW, 18, FontWeight.SemiBold,
             new Point(NameX, top + 6));
         Tl(g, row.Sub, Ui.FTiny, row.SubBrush, NameW, 15, FontWeight.Normal, new Point(NameX, top + 26));
 
@@ -603,11 +617,10 @@ internal sealed class PopupCanvas : Control
         }
         else if (layout.Span is { } span)
         {
-            DrawSpanCells(g, span, v, top, x1, x2, cw, w - NameX - x2, Tones.For(row.State));
+            DrawSpanCells(g, span, v, top, x1, x2, cw, w - NameX - x2, tones);
         }
         else
         {
-            var tones = Tones.For(row.State);
             DrawQuotaCell(g, layout.Short, v, x1, top, cw, ShortColumn, tones);
             DrawQuotaCell(g, layout.Long, v, x2, top, cw, LongColumn, tones);
             // an account without a model limit (other provider, API key) leaves the cell empty
@@ -658,7 +671,7 @@ internal sealed class PopupCanvas : Control
             countdown = "";
         if (countdown.Length > 0)
         {
-            var cd = Layout(countdown, Ui.FTiny, Ui.MutedBrush);
+            var cd = Layout(countdown, Ui.FTiny, tones.Muted);
             if (cd.Width <= cw - value.Width - 8)
             {
                 cd.Draw(g, new Point(right - cd.Width, top + 10));
@@ -680,7 +693,7 @@ internal sealed class PopupCanvas : Control
         if (frac > 0.001)
             g.DrawRectangle(barBrush, null, new Rect(x, top + 32, Math.Max(6, cw * Math.Min(1, frac)), 6), 3, 3);
         if (WindowLayout.ElapsedFraction(win, _now) is { } elapsed)
-            DrawPaceTick(g, bar, elapsed, v.IsStale ? Ui.MutedBrush : Ui.TextBrush);
+            DrawPaceTick(g, bar, elapsed, tones.Tick);
     }
 
     /// <summary>Pace tick: how much of the window's time has passed. A bar that ends left of it

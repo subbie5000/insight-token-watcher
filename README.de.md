@@ -106,6 +106,10 @@ kommen über `notify-send`, sofern installiert.
   unauffälliges Konto bleibt ruhig (zweite Zeile nennt den Anbieter); nur Ausnahmen
   bekommen ein farbiges Statuswort und eine Prognosezeile
   („Woche: leer in … – Reset erst in …!“).
+- **Ein Konto, dessen Token nicht funktioniert, wird ausgegraut** – Name, alte Werte, alles –
+  und nennt den Grund: „Token abgelaufen“, „Token widerrufen“ (etwa vom Besitzer-Tool
+  erneuert), „Token ungültig“ (abgelehnt) oder „kein Schlüssel“. In der Zusammenfassung
+  zählt es als „Token ungültig“, nicht als Fehler.
 - **Mouse-over auf ein Konto** zeigt alle Fenster mit genauer Reset-Zeit.
 - Guthaben-Konten (DeepSeek/Moonshot): Restbetrag + Reichweite bei aktuellem Verbrauch.
 - Balloon-Warnung, sobald ein Konto leerläuft oder gesperrt wird (abschaltbar).

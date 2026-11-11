@@ -1381,6 +1381,36 @@ Run("Anthropic poll: a reused Fable value says when it was read", () =>
     finally { AnthropicPoller.Clock = () => DateTimeOffset.UtcNow; }
 });
 
+Run("token status: an account whose token does not work is named, everything else is not", () =>
+{
+    AccountView Failed(string error, bool oldValues = true)
+    {
+        var cfg = new AccountConfig { Name = "C", Provider = ProviderKind.Anthropic };
+        var good = new AccountSnapshot { AccountId = cfg.Id, Ok = true };
+        return new AccountView
+        {
+            Config = cfg, Snapshot = AccountSnapshot.Failure(cfg.Id, error), LastGood = oldValues ? good : null,
+            Failure = PollingEngine.ClassifyFailure(error)
+        };
+    }
+    // observed verbatim on 2026-11-11: the tool that owns the token had renewed it between two syncs
+    const string revoked = "HTTP 401 – keine Rate-Limit-Header. {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"OAuth access token has been revoked.\"}}";
+    Check(TokenStatus.Problem(Failed(revoked)) == "Token widerrufen", "revoked: " + TokenStatus.Problem(Failed(revoked)));
+    Check(TokenStatus.Problem(Failed("HTTP 401 – keine Rate-Limit-Header. {\"error\":{\"message\":\"OAuth access token has expired.\"}}")) == "Token abgelaufen", "expired");
+    Check(TokenStatus.Problem(Failed("HTTP 401 – keine x-ratelimit-*-Header. {\"error\":{\"message\":\"Invalid API Key\"}}", oldValues: false)) == "Token ungültig", "wrong key, never any values");
+    Check(TokenStatus.Problem(Failed("HTTP 403: {\"error\":\"forbidden\"}")) == "Token ungültig", "403");
+    Check(TokenStatus.Problem(Failed("Kein API-Schlüssel hinterlegt (Einstellungen).", oldValues: false)) == "kein Schlüssel", "no key stored");
+    Check(TokenStatus.Problem(Failed("HttpRequestException: Name or service not known")) is null, "network is not a token problem");
+    Check(TokenStatus.Problem(Failed("HTTP 500: boom")) is null, "a server error is not a token problem");
+    var cfgOk = new AccountConfig { Name = "ok" };
+    var ok = new AccountSnapshot { AccountId = cfgOk.Id, Ok = true };
+    Check(TokenStatus.Problem(new AccountView { Config = cfgOk, Snapshot = ok, LastGood = ok }) is null, "working token");
+    // a renewed token arrived and polls fine again: the old failure kind must not stick to the label
+    Check(TokenStatus.Problem(new AccountView { Config = cfgOk, Snapshot = ok, LastGood = ok, Failure = FailureKind.AuthInvalid }) is null,
+        "judged by the latest poll, not by a leftover failure kind");
+    Check(TokenStatus.Problem(new AccountView { Config = cfgOk }) is null, "no poll yet");
+});
+
 Run("status.json: values per window with the time they were read", () =>
 {
     var cfg = new AccountConfig { Name = "C", Provider = ProviderKind.Anthropic };

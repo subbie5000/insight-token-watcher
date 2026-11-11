@@ -43,6 +43,11 @@ internal static class Theme
     public static Color PWarn => GlassPalette ? GlassText.Warn : Warn;
     public static Color PCrit => GlassPalette ? GlassText.Crit : Crit;
 
+    /// <summary>All text of a greyed-out row (an account whose token does not work): clearly
+    /// greyer than a normal name, still readable on a neutral card (≥ 4.5:1 opaque, as the old
+    /// values on glass).</summary>
+    public static Color PGreyed => GlassPalette ? GlassText.Stale : Faint;
+
     public static string HealthLabel(Health h) => h switch
     {
         Health.Ok => "OK",
