@@ -9,7 +9,7 @@ Reset pro Konto – so siehst du sofort, ob dein Kontingent bis zum Reset reicht
 | Anbieter | Datenquelle | Fenster |
 |---|---|---|
 | Anthropic (API-Key oder OAuth/Setup-Token) | Rate-Limit-Header auf einem Mini-Call (`max_tokens=1`, Haiku); Modell-Limits aus `GET /api/oauth/usage` | 5-Std-, 7-Tage-Fenster, Modell-Wochen (Fable, …) |
-| Kimi Code (Abo) | `GET api.kimi.com/coding/v1/usages` (exakte Anteile aus `usages`) | Wochenkontingent + 5-Std-Fenster |
+| Kimi Code (Abo) | `GET api.kimi.com/coding/v1/usages` (exakte Anteile aus `usages`) | Wochenkontingent + 5-Std-Fenster. Die monatliche Gesamtnutzung der Abo-Seite steckt nicht in dieser API; die App nutzt keine Browser-Sessions. |
 | Moonshot / Kimi Guthaben (Prepaid) | `GET api.moonshot.ai/v1/users/me/balance` | Guthaben (kein Reset) |
 | GLM / z.ai / BigModel | `GET {base}/api/monitor/usage/quota/limit` | Token-/Credit-Kontingente mit Reset |
 | DeepSeek | `GET api.deepseek.com/user/balance` | Guthaben (kein Reset) |
