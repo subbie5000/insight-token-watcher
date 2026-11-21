@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.11.3] - 2026-11-21
+
+### Fixed
+- **Kimi Code showed 0 % for the week although kimi.com reported usage.** The legacy response
+  fields count whole requests: a week with 0.38 of a request used arrived as "0 of 100". The
+  response now also carries exact ratios (`usages.limit_5h / limit_7d`, the figures kimi.com
+  shows); the app uses them for value and reset time and drops the rounded request counts.
+- Percentages below 1 % are shown as what they are (0,38 % / 0,95 %) instead of "<1 %";
+  anything used never reads as 0 %.
+- CLI: `--raw` prints the raw Kimi usage response for diagnosis.
+
 ## [1.11.2] - 2026-11-11
 
 ### Changed

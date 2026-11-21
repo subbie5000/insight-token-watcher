@@ -12,7 +12,7 @@ Supported providers:
 | Provider | Data source | Windows shown |
 |---|---|---|
 | Anthropic (API key or OAuth / setup token) | Rate-limit headers on a minimal `POST /v1/messages` (`max_tokens=1`, Haiku); model-scoped limits from `GET /api/oauth/usage` | 5-hour, 7-day, model weeks (Fable, …) |
-| Kimi Code (subscription) | `GET api.kimi.com/coding/v1/usages` | Weekly quota + 5-hour window |
+| Kimi Code (subscription) | `GET api.kimi.com/coding/v1/usages` (exact ratios from `usages`) | Weekly quota + 5-hour window |
 | Moonshot / Kimi balance (prepaid) | `GET api.moonshot.ai/v1/users/me/balance` | Balance (no reset) |
 | GLM (z.ai / BigModel) | `GET {base}/api/monitor/usage/quota/limit` | Token/credit quotas with reset |
 | DeepSeek | `GET api.deepseek.com/user/balance` | Balance (no reset) |

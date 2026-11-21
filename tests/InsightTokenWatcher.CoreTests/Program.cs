@@ -167,6 +167,30 @@ Run("Kimi Code: proto3 omits used=0 → 0 %, not unknown", () =>
     Check(five.UsedFraction == 0, "expected 0, got " + five.UsedFraction);
 });
 
+Run("Kimi Code: the new usages ratios replace the request counts (a week of 0.38 % showed 0 %)", () =>
+{
+    // observed verbatim on 2026-11-21 (api.kimi.com/coding/v1/usages, booster_wallet left out).
+    // The legacy fields count whole requests: the week has 0.38 of a request used, so they say 0.
+    var json = """
+    {"usage":{"limit":"100","remaining":"100","resetTime":"2026-11-22T10:19:51.097593Z"},
+     "limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},
+                "detail":{"limit":"100","used":"1","remaining":"99","resetTime":"2026-11-21T15:19:51.097593Z"}}],
+     "usages":{"limit_5h":{"used_ratio":0.0095,"reset_time":"2026-11-21T15:19:50Z"},
+               "limit_7d":{"used_ratio":0.0038,"reset_time":"2026-11-22T10:19:50Z"}}}
+    """;
+    var s = KimiCodePoller.ParseBody(Guid.NewGuid(), json);
+    Check(s.Ok && s.Windows.Count == 2, "two windows: " + s.Windows.Count);
+    var week = s.Windows.Single(w => w.Key == "week");
+    Check(Math.Abs(week.UsedFraction!.Value - 0.0038) < 1e-9, "week 0.38 %, not the rounded 0: " + week.UsedFraction);
+    Check(week.ResetAtUtc == TimeParsing.ParseFlexible("2026-11-22T10:19:50Z"), "week reset from usages");
+    var five = s.Windows.Single(w => w.Key == "300m");
+    Check(Math.Abs(five.UsedFraction!.Value - 0.0095) < 1e-9, "5 h 0.95 %: " + five.UsedFraction);
+    Check(five.ResetAtUtc == TimeParsing.ParseFlexible("2026-11-21T15:19:50Z"), "5 h reset from usages");
+    // "noch 100 von 100 Requests" next to 0.38 % would contradict itself – the counts are whole requests
+    Check(week.Total is null && week.Remaining is null && five.Total is null && five.Remaining is null,
+        "no rounded request counts beside the precise ratio");
+});
+
 Run("Moonshot: balance (international = USD)", () =>
 {
     var json = """{"code":0,"data":{"available_balance":45.20,"voucher_balance":10.00,"cash_balance":35.20}}""";
@@ -1673,7 +1697,11 @@ Run("tray ring: mean of the general weeks – Fable weeks do not dilute it", () 
 Run("percent for cells: whole numbers, never rounded onto 0 % or 100 %", () =>
 {
     Check(Formatting.PercentShort(0) == "0 %", "0");
-    Check(Formatting.PercentShort(0.003) == "<1 %", "0.3 %");
+    Check(Formatting.PercentShort(0.003) == "0,3 %", "0.3 %: " + Formatting.PercentShort(0.003));
+    Check(Formatting.PercentShort(0.0038) == "0,38 %", "Kimi week: " + Formatting.PercentShort(0.0038));
+    Check(Formatting.PercentShort(0.0095) == "0,95 %", "Kimi 5 h: " + Formatting.PercentShort(0.0095));
+    Check(Formatting.PercentShort(0.00001) == "<0,01 %", "tiny but used is not 0 %: " + Formatting.PercentShort(0.00001));
+    Check(Formatting.Percent(0.0038) == "0,38 %", "tooltip: " + Formatting.Percent(0.0038));
     Check(Formatting.PercentShort(0.585) == "59 %" || Formatting.PercentShort(0.585) == "58 %", "58.5 → whole: " + Formatting.PercentShort(0.585));
     Check(Formatting.PercentShort(0.996) == "99 %", "99.6 stays below 100: " + Formatting.PercentShort(0.996));
     Check(Formatting.PercentShort(1.0) == "100 %", "100");

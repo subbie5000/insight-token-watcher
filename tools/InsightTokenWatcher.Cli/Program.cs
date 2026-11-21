@@ -72,6 +72,30 @@ else
 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 var failures = 0;
 
+// Diagnosis: dump the raw Kimi usage response (numbers and reset times only – no key is printed).
+//   … --raw [--only <part of the account name>]
+if (args.Contains("--raw"))
+{
+    string? Only()
+    {
+        var i = Array.IndexOf(args, "--only");
+        return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+    }
+    var only = Only();
+    foreach (var (cfg, key) in accounts)
+    {
+        if (cfg.Provider != ProviderKind.KimiCode) continue;
+        if (only is not null && !cfg.Name.Contains(only, StringComparison.OrdinalIgnoreCase)) continue;
+        using var req = new HttpRequestMessage(HttpMethod.Get, ProviderInfo.BaseUrl(cfg) + "/coding/v1/usages");
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
+        using var resp = await http.SendAsync(req);
+        var body = await resp.Content.ReadAsStringAsync();
+        Console.WriteLine($"{cfg.Name}  HTTP {(int)resp.StatusCode}");
+        Console.WriteLine(body);
+    }
+    return 0;
+}
+
 // Diagnosis: print the raw rate-limit headers Anthropic returns for a ping with a given model.
 //   … --headers [--model claude-…] [--only <part of the account name>]
 // Only anthropic-ratelimit-* headers are printed (numbers, states, reset times – no ids, no keys).

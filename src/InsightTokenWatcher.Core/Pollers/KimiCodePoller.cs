@@ -64,6 +64,13 @@ public sealed class KimiCodePoller : IAccountPoller
 
             if (snap.Windows.Count == 0)
                 return AccountSnapshot.Failure(accountId, "Antwort ohne usage/limits: " + Snippet(body));
+
+            // Since ~Nov 2026 the response also carries "usages": exact ratios per window, the
+            // same figures kimi.com shows. The legacy fields above count whole requests, so a
+            // week with 0.38 of a request used arrived as 0 % – the ratios win where they exist.
+            if (root.TryGetProperty("usages", out var ratios) && ratios.ValueKind == JsonValueKind.Object)
+                ApplyRatios(snap, ratios);
+
             return snap;
         }
         catch (JsonException ex)
@@ -95,6 +102,46 @@ public sealed class KimiCodePoller : IAccountPoller
             ResetAtUtc = reset,
             WindowMinutes = windowMinutes
         };
+    }
+
+    /// <summary>
+    /// <c>usages.limit_5h / limit_7d</c> (and any other <c>limit_&lt;n&gt;[hd]</c>): used_ratio 0..1 plus
+    /// reset_time. A window that already exists gets the precise ratio and reset; the rounded
+    /// request counts are dropped, because "0.38 %" next to "noch 100 von 100 Requests" would
+    /// contradict itself. Unknown windows are added.
+    /// </summary>
+    private static void ApplyRatios(AccountSnapshot snap, JsonElement ratios)
+    {
+        foreach (var p in ratios.EnumerateObject())
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(p.Name, @"^limit_(\d+)([hd])$");
+            if (!m.Success || p.Value.ValueKind != JsonValueKind.Object) continue;
+            var minutes = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) *
+                          (m.Groups[2].Value == "h" ? 60 : 1440);
+            var ratio = ProviderInfo.JsonDouble(p.Value, "used_ratio");
+            if (ratio is null) continue;
+            var reset = TimeParsing.ParseFlexible(ProviderInfo.JsonString(p.Value, "reset_time"));
+
+            var w = snap.Windows.FirstOrDefault(x => x.WindowMinutes is { } wm && Math.Abs(wm - minutes) < 1);
+            if (w is null)
+            {
+                var label = Math.Abs(minutes - 10080) < 1 ? "Wochenkontingent"
+                    : minutes % 1440 == 0 ? $"{minutes / 1440:0}-Tage-Fenster"
+                    : minutes % 60 == 0 ? $"{minutes / 60:0}-Std-Fenster"
+                    : $"{minutes:0}-Min-Fenster";
+                w = new QuotaWindow
+                {
+                    Key = Math.Abs(minutes - 10080) < 1 ? "week" : $"{(int)minutes}m",
+                    Label = label,
+                    WindowMinutes = minutes
+                };
+                snap.Windows.Add(w);
+            }
+            w.UsedFraction = Math.Clamp(ratio.Value, 0, 1);
+            if (reset is not null) w.ResetAtUtc = reset;
+            w.Total = null;
+            w.Remaining = null;
+        }
     }
 
     internal static string Snippet(string body) => body.Length <= 300 ? body : body[..300];

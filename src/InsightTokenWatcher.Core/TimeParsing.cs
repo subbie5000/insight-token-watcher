@@ -83,6 +83,8 @@ public static class Formatting
     public static string Percent(double? frac)
     {
         if (frac is null) return "–";
+        // below one percent the exact figure matters (Kimi reports 0.38 % of a request)
+        if (frac is > 0 and < 0.01) return (frac.Value * 100).ToString("0.##", De) + " %";
         return (frac.Value * 100).ToString("0.#", De) + " %";
     }
 
@@ -93,7 +95,8 @@ public static class Formatting
         if (frac is not { } f) return "–";
         if (f <= 0) return "0 %";
         if (f >= 0.999) return "100 %";
-        if (f < 0.005) return "<1 %";
+        if (f < 0.0001) return "<0,01 %";      // never "0 %" while something is used
+        if (f < 0.01) return (f * 100).ToString("0.##", De) + " %"; // 0,38 % / 0,95 % instead of "<1 %"
         return Math.Min(99, (int)Math.Round(f * 100)).ToString(De) + " %";
     }
 }
