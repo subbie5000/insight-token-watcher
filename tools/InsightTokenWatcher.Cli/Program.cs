@@ -86,12 +86,39 @@ if (args.Contains("--raw"))
     {
         if (cfg.Provider != ProviderKind.KimiCode) continue;
         if (only is not null && !cfg.Name.Contains(only, StringComparison.OrdinalIgnoreCase)) continue;
-        using var req = new HttpRequestMessage(HttpMethod.Get, ProviderInfo.BaseUrl(cfg) + "/coding/v1/usages");
+        // optional: other read-only paths to probe, e.g. --raw /coding/v1/subscription,/coding/v1/credits
+        var paths = args.SkipWhile(a => a != "--raw").Skip(1).FirstOrDefault(a => !a.StartsWith("--")) is { } list
+            ? list.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            : new[] { "/coding/v1/usages" };
+        foreach (var path in paths)
+        {
+            if (!path.StartsWith("/coding/", StringComparison.Ordinal)) { Console.WriteLine("nur /coding/…-Pfade: " + path); continue; }
+            using var req = new HttpRequestMessage(HttpMethod.Get, ProviderInfo.BaseUrl(cfg) + path);
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
         using var resp = await http.SendAsync(req);
         var body = await resp.Content.ReadAsStringAsync();
-        Console.WriteLine($"{cfg.Name}  HTTP {(int)resp.StatusCode}");
-        Console.WriteLine(body);
+            Console.WriteLine($"{cfg.Name}  {path}  HTTP {(int)resp.StatusCode}");
+            Console.WriteLine(body.Length > 2500 ? body[..2500] + "…" : body);
+        }
+    }
+    return 0;
+}
+
+// Diagnosis: does the kimi.com web usage endpoint answer to an API key as well (monthly pool)?
+//   … --web-raw
+if (args.Contains("--web-raw"))
+{
+    foreach (var (cfg, key) in accounts)
+    {
+        if (cfg.Provider != ProviderKind.KimiCode) continue;
+        using var req = new HttpRequestMessage(HttpMethod.Post,
+            "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages");
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
+        req.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        using var resp = await http.SendAsync(req);
+        var body = await resp.Content.ReadAsStringAsync();
+        Console.WriteLine($"{cfg.Name}  GetUsages  HTTP {(int)resp.StatusCode}");
+        Console.WriteLine(body.Length > 4000 ? body[..4000] + "…" : body);
     }
     return 0;
 }
